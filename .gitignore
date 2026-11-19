@@ -1,0 +1,13 @@
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+venv/
+.env
+
+# Local runtime uploads, generated forms, and cumulative history
+uploads/
+output/
+history.json
+template.xlsx
+

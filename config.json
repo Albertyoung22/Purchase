@@ -1,0 +1,32 @@
+{
+  "default_sheet": "請購單-3000元以上一定要用此表",
+  "under_3000_sheet": "請購單簡化流程-3000元以下適用",
+  "under_3000_threshold": 3000,
+  "auto_select_sheet_by_total": true,
+  "keep_only_target_sheet": true,
+  "cells": {
+    "budget_code": "H6",
+    "payer_name": "J8",
+    "payer_template": "因業務執行需要由(簽章) {name} 代墊",
+    "receipt_count": "I4",
+    "receipt_count_template": "黏貼單據  {count}  張",
+    "department": "C18",
+    "request_date": "H18",
+    "purpose": "A30",
+    "total_amount": "H28",
+    "header_amount": "I8"
+  },
+  "items_table": {
+    "start_row": 21,
+    "max_rows": 7,
+    "columns": {
+      "name": "A",
+      "spec": "C",
+      "unit": "E",
+      "quantity": "F",
+      "unit_price": "G",
+      "subtotal": "H",
+      "note": "I"
+    }
+  }
+}

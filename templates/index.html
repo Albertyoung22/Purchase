@@ -1,0 +1,873 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>土城高中｜採購申請單自動化桌面系統</title>
+  <link rel="icon" type="image/svg+xml" href="/static/favicon.svg" />
+  <link rel="icon" type="image/png" href="/static/favicon.png" />
+  <style>
+    :root {
+      --bg: #f3f5f8;
+      --card: #ffffff;
+      --primary: #1f5f99;
+      --primary-hover: #174978;
+      --accent: #0f766e;
+      --danger: #b91c1c;
+      --border: #d9e1ea;
+      --text: #1e293b;
+      --muted: #64748b;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: "Microsoft JhengHei", "Segoe UI", sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.5;
+    }
+    header {
+      background: linear-gradient(135deg, #163a5f, #1f5f99);
+      color: #fff;
+      padding: 14px 24px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      box-shadow: 0 2px 6px rgba(0,0,0,0.12);
+    }
+    header h1 { margin: 0; font-size: 18px; letter-spacing: 0.5px; }
+    header .sub { font-size: 12px; opacity: 0.85; }
+    .container { max-width: 1120px; margin: 18px auto; padding: 0 16px 40px; }
+    .card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 16px 20px;
+      margin-bottom: 16px;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+    }
+    .card-title {
+      font-size: 15px;
+      font-weight: 700;
+      color: var(--primary);
+      margin: 0 0 12px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .row { display: flex; gap: 12px; flex-wrap: wrap; align-items: flex-end; }
+    .col { flex: 1; min-width: 180px; }
+    label { display: block; font-size: 12px; font-weight: 600; color: var(--muted); margin-bottom: 4px; }
+    input[type="text"], input[type="number"], select, textarea {
+      width: 100%;
+      padding: 8px 10px;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      font-size: 13px;
+      font-family: inherit;
+      background: #fff;
+    }
+    textarea { min-height: 120px; resize: vertical; font-family: Consolas, "Microsoft JhengHei", monospace; }
+    button {
+      padding: 8px 14px;
+      border: none;
+      border-radius: 6px;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      font-family: inherit;
+      background: var(--primary);
+      color: #fff;
+      transition: background 0.15s;
+    }
+    button:hover { background: var(--primary-hover); }
+    button.secondary { background: #e2e8f0; color: #1e293b; }
+    button.secondary:hover { background: #cbd5e1; }
+    button.accent { background: var(--accent); }
+    button.accent:hover { background: #0d5e58; }
+    button.danger { background: var(--danger); }
+    .tabs { display: flex; gap: 8px; border-bottom: 2px solid var(--border); margin-bottom: 14px; }
+    .tab-btn {
+      background: transparent;
+      color: var(--muted);
+      border-radius: 6px 6px 0 0;
+      padding: 8px 16px;
+    }
+    .tab-btn.active { background: var(--primary); color: #fff; }
+    .tab-panel { display: none; }
+    .tab-panel.active { display: block; }
+    table { width: 100%; border-collapse: collapse; margin-top: 8px; font-size: 13px; }
+    th, td { border: 1px solid var(--border); padding: 6px 8px; text-align: left; }
+    th { background: #f8fafc; font-weight: 600; }
+    .badge {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 999px;
+      font-size: 12px;
+      background: #dbeafe;
+      color: #1e40af;
+    }
+    .badge.ok { background: #dcfce7; color: #166534; }
+    .badge.warn { background: #fef3c7; color: #92400e; }
+    .status-bar {
+      padding: 10px 14px;
+      border-radius: 6px;
+      margin-top: 10px;
+      font-size: 13px;
+      display: none;
+    }
+    .status-bar.ok { display: block; background: #ecfdf5; border: 1px solid #a7f3d0; color: #065f46; }
+    .status-bar.err { display: block; background: #fef2f2; border: 1px solid #fecaca; color: #991b1b; }
+    pre {
+      background: #f8fafc;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 10px;
+      font-size: 12px;
+      overflow-x: auto;
+      max-height: 220px;
+    }
+    .file-list a {
+      display: inline-block;
+      margin: 4px 8px 4px 0;
+      padding: 6px 12px;
+      background: #eff6ff;
+      border: 1px solid #bfdbfe;
+      border-radius: 6px;
+      color: #1d4ed8;
+      text-decoration: none;
+      font-size: 13px;
+      font-weight: 600;
+    }
+    .file-list a:hover { background: #dbeafe; }
+    details summary { cursor: pointer; font-size: 13px; color: var(--primary); font-weight: 600; margin-top: 8px; }
+    .main-nav { display: flex; gap: 10px; margin-bottom: 16px; }
+    .main-nav-btn {
+      padding: 10px 20px;
+      border-radius: 8px;
+      background: #e2e8f0;
+      color: var(--text);
+      font-size: 14px;
+      font-weight: 700;
+    }
+    .main-nav-btn.active { background: var(--primary); color: #fff; }
+    .main-view { display: none; }
+    .main-view.active { display: block; }
+  </style>
+</head>
+<body>
+  <header>
+    <div>
+      <h1>臺南市立土城高級中學｜採購申請單自動化系統</h1>
+      <div class="sub">Flask + Waitress 桌面應用程式 ｜ 支援電子發票解析、明細批次填表、OR-Tools CP-SAT 最佳化分單</div>
+    </div>
+    <div style="display:flex; gap:8px;">
+      <button class="secondary" onclick="openOutputFolder()">開啟輸出資料夾</button>
+      <button class="danger" onclick="shutdownApp()">關閉程式</button>
+    </div>
+  </header>
+
+  <div class="container">
+    <div class="main-nav">
+      <button class="main-nav-btn active" onclick="switchMainView('work', this)">採購申請作業</button>
+      <button class="main-nav-btn" onclick="switchMainView('history', this)">
+        累積採購紀錄與統計 <span id="historyCountBadge" class="badge" style="margin-left:6px;">0</span>
+      </button>
+      <button class="main-nav-btn" onclick="switchMainView('settings', this)">
+        範本與系統設定
+      </button>
+    </div>
+
+    <div id="view-work" class="main-view active">
+    <!-- Step 1 (was Step 2): Data Source -->
+    <div class="card">
+      <div class="card-title">
+        <span>步驟 1：選擇資料來源（影像掃描 / 文字 / CSV / 手動）</span>
+        <span id="tplStatus" class="badge ok">
+          {{ '使用範本：' + template_name if has_template else '使用內建標準格式' }}
+        </span>
+      </div>
+      <div class="tabs">
+        <button class="tab-btn active" onclick="switchTab('scan', this)">影像掃描（發票 / 估價單）</button>
+        <button class="tab-btn" onclick="switchTab('invoice_text', this)">電子發票文字（如小北百貨）</button>
+        <button class="tab-btn" onclick="switchTab('csv', this)">上傳 CSV 清單 / 財政部電子發票</button>
+        <button class="tab-btn" onclick="switchTab('manual', this)">手動輸入 / 掃描結果編輯</button>
+      </div>
+
+      <!-- Shared Header Metadata -->
+      <div class="row" id="sharedMeta" style="margin-bottom:10px;">
+        <div class="col">
+          <label>預算科目代碼（可搜尋、下拉或手動輸入）</label>
+          <input type="text" id="budgetFilter" placeholder="輸入關鍵字篩選（如：事務、射箭、L32）" oninput="filterBudgetSelect()" style="margin-bottom:4px; font-size:12px;" />
+          <select id="budgetCodeSelect" onchange="syncSelectToInput('budgetCodeSelect', 'budgetCode'); onBudgetCodeChange();"></select>
+          <input type="text" id="budgetCode" placeholder="例如：321 或 L30018" value="321" oninput="onBudgetCodeChange()" style="margin-top:4px;" />
+          <div id="controlledCodeHint" style="display:none; margin-top:4px; font-size:12px; color:#b45309; font-weight:600;"></div>
+        </div>
+        <div class="col">
+          <label>請購單位（可下拉選擇或手動輸入）</label>
+          <select id="departmentSelect" onchange="syncSelectToInput('departmentSelect', 'department')"></select>
+          <input type="text" id="department" placeholder="例如：總務處" value="總務處" style="margin-top:4px;" />
+        </div>
+        <div class="col">
+          <label>代墊人（可下拉選擇或手動輸入，選填）</label>
+          <select id="payerSelect" onchange="syncSelectToInput('payerSelect', 'payerName')"></select>
+          <input type="text" id="payerName" placeholder="例如：楊敦州" style="margin-top:4px;" />
+        </div>
+        <div class="col">
+          <label>用途說明（可下拉選擇或手動輸入）</label>
+          <select id="purposeSelect" onchange="syncSelectToInput('purposeSelect', 'purpose')"></select>
+          <input type="text" id="purpose" placeholder="例如：事務用品採購" style="margin-top:4px;" />
+        </div>
+      </div>
+      <div class="row" style="margin-bottom:14px; background:#f8fafc; padding:10px; border-radius:6px; border:1px solid var(--border);">
+        <div class="col">
+          <label>計畫名稱（自各工作表擷取，可下拉選填）</label>
+          <select id="planNameSelect" onchange="syncSelectToInput('planNameSelect', 'planName')"></select>
+          <input type="text" id="planName" placeholder="選填或依代碼自動帶入" style="margin-top:4px;" />
+        </div>
+        <div class="col">
+          <label>一級用途別（可下拉選填）</label>
+          <select id="level1Select" onchange="syncSelectToInput('level1Select', 'level1')"></select>
+          <input type="text" id="level1" placeholder="選填或依代碼自動帶入" style="margin-top:4px;" />
+        </div>
+        <div class="col">
+          <label>二級用途別（可下拉選填）</label>
+          <select id="level2Select" onchange="syncSelectToInput('level2Select', 'level2')"></select>
+          <input type="text" id="level2" placeholder="選填或依代碼自動帶入" style="margin-top:4px;" />
+        </div>
+        <div class="col">
+          <label>三級用途別（可下拉選填）</label>
+          <select id="level3Select" onchange="syncSelectToInput('level3Select', 'level3')"></select>
+          <input type="text" id="level3" placeholder="選填或依代碼自動帶入" style="margin-top:4px;" />
+        </div>
+      </div>
+
+      <!-- Tab 0: Image Scan (Invoice / Quotation) -->
+      <div id="panel-scan" class="tab-panel active">
+        <div class="row">
+          <div class="col">
+            <label>上傳發票或估價單（圖片 .jpg/.png/.webp 或 電子發票 .pdf）</label>
+            <input type="file" id="scanFile" accept=".jpg,.jpeg,.png,.webp,.bmp,.pdf" />
+          </div>
+          <div style="width:180px;">
+            <label>PDF 密碼（若有加密再填）</label>
+            <input type="text" id="pdfPassword" placeholder="如統編或身分證" />
+          </div>
+          <div class="col">
+            <label>Gemini API Key（選填；留空則使用內建離線辨識）</label>
+            <input type="text" id="geminiKey" placeholder="選填：填入後改用 Gemini Vision" />
+          </div>
+          <div>
+            <button class="accent" onclick="scanDocumentImage()">開始掃描分析</button>
+          </div>
+        </div>
+        <div id="scanResultBox" style="margin-top:12px; display:none;"></div>
+      </div>
+
+      <!-- Tab 1: Invoice Text -->
+      <div id="panel-invoice_text" class="tab-panel">
+        <label>貼上電子發票明細文字</label>
+        <textarea id="invoiceText" placeholder="請貼上小北百貨或一般電子發票證明聯與明細文字...">{{ sample_invoice }}</textarea>
+        <div style="margin-top:8px; display:flex; gap:8px;">
+          <button class="secondary" onclick="parseInvoicePreview()">解析發票預覽</button>
+        </div>
+        <div id="invoiceParsedBox" style="margin-top:10px; display:none;"></div>
+      </div>
+
+      <!-- Tab 2: CSV Upload -->
+      <div id="panel-csv" class="tab-panel">
+        <div class="row">
+          <div class="col">
+            <label>CSV 類型</label>
+            <select id="csvKind">
+              <option value="standard">標準採購明細／發票 CSV（如 requests_sample.csv）</option>
+              <option value="einvoice">財政部電子發票匯出 CSV</option>
+            </select>
+          </div>
+          <div class="col">
+            <label>選擇 CSV 檔案</label>
+            <input type="file" id="csvFile" accept=".csv" />
+          </div>
+          <div>
+            <button onclick="uploadCsv()">上傳 CSV</button>
+            <a href="/api/sample-csv" style="margin-left:8px; font-size:13px;">下載標準範例 CSV</a>
+          </div>
+        </div>
+        <div id="csvStatus" style="margin-top:8px; font-size:13px; color:var(--accent);"></div>
+      </div>
+
+      <!-- Tab 3: Manual Entry -->
+      <div id="panel-manual" class="tab-panel">
+        <div class="row" style="margin-bottom:10px;">
+          <div class="col">
+            <label>資料來源類型</label>
+            <select id="manualSourceType">
+              <option value="明細">明細</option>
+              <option value="發票">發票</option>
+            </select>
+          </div>
+          <div class="col">
+            <label>發票號碼（選填）</label>
+            <input type="text" id="manualInvoiceNo" placeholder="例如：AB-12345678" />
+          </div>
+          <div class="col">
+            <label>單據張數（選填）</label>
+            <input type="number" id="manualReceiptCount" min="1" placeholder="例如：1" />
+          </div>
+          <div class="col">
+            <label>請購日期</label>
+            <input type="text" id="manualDate" placeholder="中華民國 115 年 11 月 18 日" />
+          </div>
+        </div>
+        <table id="manualTable">
+          <thead>
+            <tr>
+              <th>品名</th><th>規格</th><th>單位</th><th>數量</th><th>單價</th><th>金額(免填單價時用)</th><th>備註</th><th>操作</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+        <div style="margin-top:8px;">
+          <button class="secondary" onclick="addManualRow()">+ 新增一列品項</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Step 2 (was Step 3): OR-Tools Split & Generate -->
+    <div class="card">
+      <div class="card-title">步驟 2：OR-Tools CP-SAT 最佳化分單與產出 Excel</div>
+      <div class="row">
+        <div style="display:flex; align-items:center; gap:8px; padding-bottom:6px;">
+          <input type="checkbox" id="autoSplit" style="width:auto;" />
+          <label for="autoSplit" style="margin:0; font-size:13px; color:var(--text);">啟用 OR-Tools CP-SAT 自動最佳化分單</label>
+        </div>
+        <div style="width:180px;">
+          <label>單張金額上限 (元)</label>
+          <input type="number" id="maxAmount" value="3000" min="1" />
+        </div>
+        <div style="display:flex; gap:8px;">
+          <button class="secondary" onclick="previewForms()">預覽分單結果</button>
+          <button onclick="printPreview()">真實列印預覽 (Excel)</button>
+          <button class="accent" onclick="generateExcel()">產出 Excel 請購單</button>
+        </div>
+      </div>
+
+      <div id="statusBar" class="status-bar"></div>
+      <div id="printPreviewArea" style="margin-top:12px; display:none;"></div>
+      <div id="previewArea" style="margin-top:12px;">
+        <div style="padding:28px 16px; text-align:center; color:var(--muted); border:1px dashed var(--border); border-radius:8px; background:#f8fafc; font-size:13px;">
+          預覽與下載區：上方選擇檔案並點選「<strong>開始掃描分析</strong>」，或直接點選「<strong>預覽分單結果</strong>」、「<strong>真實列印預覽 (Excel)</strong>」、「<strong>產出 Excel 請購單</strong>」，結果將顯示於此處。
+        </div>
+      </div>
+      <div id="downloadArea" class="file-list" style="margin-top:12px;"></div>
+    </div>
+    </div><!-- /#view-work -->
+
+    <!-- Separate Tab View: Cumulative History -->
+    <div id="view-history" class="main-view">
+    <div class="card">
+      <div class="card-title">
+        <span>累積採購紀錄與彙整統計</span>
+        <div style="display:flex; gap:8px;">
+          <a href="/api/history/export" style="padding:6px 12px; background:#0f766e; color:#fff; border-radius:6px; text-decoration:none; font-size:12px; font-weight:600;">匯出累積報表 (.csv)</a>
+          <button class="secondary" onclick="clearHistoryAll()" style="font-size:12px; padding:6px 10px;">清空紀錄</button>
+        </div>
+      </div>
+      <div id="historySummary" style="display:flex; gap:10px; flex-wrap:wrap; margin-bottom:10px;"></div>
+      <div style="max-height:560px; overflow-y:auto;">
+        <table id="historyTable">
+          <thead>
+            <tr>
+              <th>產出時間</th><th>單號</th><th>來源</th><th>科目</th><th>單位</th><th>代墊人</th><th>用途 / 品項摘要</th><th>金額</th><th>操作</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </div>
+    </div><!-- /#view-history -->
+
+    <!-- Separate Tab View: Template & Settings -->
+    <div id="view-settings" class="main-view">
+    <div class="card">
+      <div class="card-title">
+        <span>採購申請單暨支出憑證黏存單格式設定</span>
+        <span id="tplStatusSettings" class="badge ok">
+          {{ '使用自訂範本：' + template_name if has_template else '已啟用內建標準格式（免上傳範本即可產出）' }}
+        </span>
+      </div>
+      <div class="row">
+        <div class="col">
+          <label>選擇或更新範本檔 (.xlsx)</label>
+          <input type="file" id="tplFile" accept=".xlsx" />
+        </div>
+        <div>
+          <button onclick="uploadTemplate()">上傳範本</button>
+          <button class="secondary" id="inspectBtn" onclick="inspectTemplate()">檢查範本工作表與公式</button>
+        </div>
+      </div>
+      <div id="inspectResult" style="margin-top:10px; display:none;"></div>
+      <details open style="margin-top:12px;">
+        <summary>進階：檢視或修改儲存格座標設定 (config.json)</summary>
+        <textarea id="configEditor" style="margin-top:8px; min-height:220px;">{{ config_json }}</textarea>
+        <div style="margin-top:8px;">
+          <button class="secondary" onclick="saveConfig()">儲存設定</button>
+        </div>
+      </details>
+    </div>
+    </div><!-- /#view-settings -->
+  </div>
+
+  <script>
+    let currentMode = "scan";
+    let budgetMap = {};
+    let budgetEntries = [];
+
+    function populateSelect(selectId, values) {
+      const sel = document.getElementById(selectId);
+      sel.innerHTML = `<option value="">-- 下拉選擇 (${values.length} 項) --</option>` +
+        values.map(v => `<option value="${v}">${v}</option>`).join("");
+    }
+
+    function syncSelectToInput(selectId, inputId) {
+      const val = document.getElementById(selectId).value;
+      if (val) document.getElementById(inputId).value = val;
+    }
+
+    function setSelectAndInput(selectId, inputId, val) {
+      document.getElementById(inputId).value = val || "";
+      const sel = document.getElementById(selectId);
+      sel.value = [...sel.options].some(o => o.value === val) ? val : "";
+    }
+
+    async function loadBudgetOptions() {
+      const res = await fetch("/api/budget-options");
+      const data = await res.json();
+      if (!data.ok) return;
+      budgetMap = {};
+      budgetEntries = data.entries || [];
+      budgetEntries.forEach(e => { budgetMap[e.code] = e; });
+
+      filterBudgetSelect();
+
+      populateSelect("departmentSelect", data.departments || []);
+      populateSelect("payerSelect", data.payers || []);
+      populateSelect("purposeSelect", data.purposes || []);
+      populateSelect("planNameSelect", data.plan_names);
+      populateSelect("level1Select", data.level1_options);
+      populateSelect("level2Select", data.level2_options);
+      populateSelect("level3Select", data.level3_options);
+
+      onBudgetCodeChange();
+    }
+
+    function filterBudgetSelect() {
+      const kw = (document.getElementById("budgetFilter").value || "").trim().toLowerCase();
+      const filtered = kw
+        ? budgetEntries.filter(e =>
+            `${e.code} ${e.plan_name} ${e.level1} ${e.level2} ${e.level3}`.toLowerCase().includes(kw)
+          )
+        : budgetEntries;
+      const codeSel = document.getElementById("budgetCodeSelect");
+      codeSel.innerHTML = `<option value="">-- 下拉選擇代碼 (${filtered.length} 項) --</option>` +
+        filtered.map(e => `<option value="${e.code}">${e.code} - ${e.level3 || e.plan_name}</option>`).join("");
+      const cur = document.getElementById("budgetCode").value.trim();
+      if ([...codeSel.options].some(o => o.value === cur)) codeSel.value = cur;
+    }
+
+    function onBudgetCodeChange() {
+      const code = document.getElementById("budgetCode").value.trim();
+      const hint = document.getElementById("controlledCodeHint");
+      if (/^L[456]/i.test(code)) {
+        hint.textContent = "⚠ 教育局列管經費項目（請依公文代碼設置並核銷）";
+        hint.style.display = "block";
+      } else {
+        hint.style.display = "none";
+      }
+      const entry = budgetMap[code];
+      if (entry) {
+        setSelectAndInput("planNameSelect", "planName", entry.plan_name || "");
+        setSelectAndInput("level1Select", "level1", entry.level1 || "");
+        setSelectAndInput("level2Select", "level2", entry.level2 || "");
+        setSelectAndInput("level3Select", "level3", entry.level3 || "");
+      }
+    }
+
+    loadBudgetOptions();
+
+    function switchMainView(viewName, btn) {
+      document.querySelectorAll(".main-nav-btn").forEach(b => b.classList.remove("active"));
+      document.querySelectorAll(".main-view").forEach(v => v.classList.remove("active"));
+      if (btn) btn.classList.add("active");
+      document.getElementById("view-" + viewName).classList.add("active");
+      if (viewName === "history") loadHistory();
+    }
+
+    function switchTab(mode, btn) {
+      currentMode = mode;
+      document.querySelectorAll(".tab-btn").forEach(b => b.classList.remove("active"));
+      document.querySelectorAll(".tab-panel").forEach(p => p.classList.remove("active"));
+      if (btn) btn.classList.add("active");
+      document.getElementById("panel-" + mode).classList.add("active");
+    }
+
+    async function scanDocumentImage() {
+      const file = document.getElementById("scanFile").files[0];
+      if (!file) return showStatus("請先選擇發票或估價單圖片檔", false);
+      showStatus("正在掃描分析影像中，請稍候...");
+      const fd = new FormData();
+      fd.append("file", file);
+      fd.append("pdf_password", document.getElementById("pdfPassword").value.trim());
+      fd.append("gemini_api_key", document.getElementById("geminiKey").value.trim());
+      const res = await fetch("/api/scan-image", { method: "POST", body: fd });
+      const data = await res.json();
+      if (!data.ok) return showStatus(data.error, false);
+
+      const inv = data.invoice;
+      // Populate the editable manual table with scanned items so user can verify/edit and generate
+      document.getElementById("manualSourceType").value = data.document_type === "估價單" ? "明細" : "發票";
+      document.getElementById("manualInvoiceNo").value = inv.invoice_no || "";
+      document.getElementById("manualReceiptCount").value = "1";
+      if (inv.roc_date) document.getElementById("manualDate").value = inv.roc_date;
+      if (!document.getElementById("purpose").value && inv.seller_name) {
+        document.getElementById("purpose").value = inv.seller_name + "採購";
+      }
+
+      const tbody = document.querySelector("#manualTable tbody");
+      tbody.innerHTML = "";
+      if (inv.items && inv.items.length > 0) {
+        inv.items.forEach(it => addManualRow(it.name, it.quantity ?? 1, it.unit_price ?? "", it.unit_price == null ? (it.subtotal ?? "") : "", it.spec || "", it.unit || "", it.note || ""));
+      } else {
+        addManualRow(data.document_type + "採購", "1", "", inv.total_amount ?? "", "", "批", "");
+      }
+
+      const box = document.getElementById("scanResultBox");
+      box.style.display = "block";
+      const missingTotal = (inv.total_amount == null || inv.total_amount === 0) && (!inv.items || inv.items.length === 0);
+      box.innerHTML = `
+        <div style="padding:10px; border:1px solid ${missingTotal ? '#fca5a5' : '#a7f3d0'}; background:${missingTotal ? '#fef2f2' : '#ecfdf5'}; border-radius:6px;">
+          <strong>辨識引擎：</strong>${data.engine} ｜
+          ${data.cpsat_verified ? '<span class="badge ok">CP-SAT 金額核對相符</span> ｜ ' : ''}
+          <strong>單據類型：</strong><span class="badge">${data.document_type}</span> ｜
+          <strong>總金額：</strong>${inv.total_amount ?? '(未辨識)'} 元 ｜
+          <strong>自動選用工作表：</strong><span class="badge ok">${data.recommended_sheet}</span>
+          ${inv.items && inv.items.length ? `
+          <table style="margin-top:8px;">
+            <thead><tr><th>品名（項目）</th><th>規格</th><th>單位</th><th>數量</th><th>單價</th><th>小計</th><th>備註</th></tr></thead>
+            <tbody>${inv.items.map(i => `<tr><td>${i.name}</td><td>${i.spec || ''}</td><td>${i.unit || ''}</td><td>${i.quantity}</td><td>${i.unit_price ?? ''}</td><td>${i.subtotal}</td><td>${i.note || ''}</td></tr>`).join('')}</tbody>
+          </table>` : `<div style="margin-top:6px; color:#991b1b; font-weight:600;">未能自動解析出明細金額，請切換到「手動輸入 / 掃描結果編輯」補填金額，或貼上「原始文字」後再試。</div>`}
+          <details style="margin-top:6px;"><summary>檢視原始 OCR / PDF 文字</summary><pre>${data.raw_text}</pre></details>
+        </div>
+      `;
+      showStatus(`掃描完成！總金額 ${inv.total_amount ?? 0} 元 → 自動選用「${data.recommended_sheet}」`);
+    }
+
+    function showStatus(msg, isOk = true) {
+      const bar = document.getElementById("statusBar");
+      bar.textContent = msg;
+      bar.className = "status-bar " + (isOk ? "ok" : "err");
+    }
+
+    function addManualRow(name = "", qty = "1", price = "", sub = "", spec = "", unit = "個", note = "") {
+      const tbody = document.querySelector("#manualTable tbody");
+      const tr = document.createElement("tr");
+      tr.innerHTML = `
+        <td><input type="text" class="m-name" value="${name}" placeholder="品名（項目）" /></td>
+        <td><input type="text" class="m-spec" value="${spec}" placeholder="規格" /></td>
+        <td><input type="text" class="m-unit" value="${unit || '個'}" /></td>
+        <td><input type="number" class="m-qty" value="${qty}" /></td>
+        <td><input type="number" class="m-price" value="${price}" placeholder="選填" /></td>
+        <td><input type="number" class="m-sub" value="${sub}" placeholder="選填" /></td>
+        <td><input type="text" class="m-note" value="${note}" placeholder="備註" /></td>
+        <td><button class="secondary" onclick="this.closest('tr').remove()">刪除</button></td>
+      `;
+      tbody.appendChild(tr);
+    }
+    addManualRow("範例品項", "1", "100", "");
+
+    async function uploadTemplate() {
+      const file = document.getElementById("tplFile").files[0];
+      if (!file) return showStatus("請先選擇 .xlsx 範本檔案", false);
+      const fd = new FormData();
+      fd.append("file", file);
+      const res = await fetch("/api/upload-template", { method: "POST", body: fd });
+      const data = await res.json();
+      if (!data.ok) return showStatus(data.error, false);
+      const badge = document.getElementById("tplStatus");
+      badge.textContent = "使用範本：" + data.filename;
+      badge.className = "badge ok";
+      const badgeSettings = document.getElementById("tplStatusSettings");
+      if (badgeSettings) {
+        badgeSettings.textContent = "使用自訂範本：" + data.filename;
+        badgeSettings.className = "badge ok";
+      }
+      await loadBudgetOptions();
+      showStatus("範本上傳成功：" + data.filename);
+    }
+
+    async function inspectTemplate() {
+      const box = document.getElementById("inspectResult");
+      const btn = document.getElementById("inspectBtn");
+      if (box.style.display === "block") {
+        box.style.display = "none";
+        btn.textContent = "檢查範本工作表與公式";
+        return;
+      }
+      const res = await fetch("/api/inspect-template");
+      const data = await res.json();
+      if (!data.ok) return showStatus(data.error, false);
+      box.style.display = "block";
+      btn.textContent = "收合範本檢查結果";
+      box.innerHTML = `
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
+          <strong style="font-size:13px;">範本工作表檢查結果（共 ${data.sheets.length} 個工作表）</strong>
+          <button class="secondary" onclick="inspectTemplate()">收合</button>
+        </div>
+        <div style="max-height:360px; overflow-y:auto; padding-right:4px;">
+          ${data.sheets.map(s => `
+            <pre><strong>工作表：${s.name}</strong> (${s.rows}列 x ${s.cols}欄)
+標籤：${s.labels.join(" | ")}
+公式：${s.formulas.join(" | ")}</pre>
+          `).join("")}
+        </div>
+      `;
+    }
+
+    async function saveConfig() {
+      const config_text = document.getElementById("configEditor").value;
+      const res = await fetch("/api/save-config", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ config_text })
+      });
+      const data = await res.json();
+      if (!data.ok) return showStatus("設定儲存失敗：" + data.error, false);
+      showStatus("config.json 已更新並儲存");
+    }
+
+    async function uploadCsv() {
+      const file = document.getElementById("csvFile").files[0];
+      if (!file) return showStatus("請先選擇 CSV 檔案", false);
+      const fd = new FormData();
+      fd.append("file", file);
+      const res = await fetch("/api/upload-csv", { method: "POST", body: fd });
+      const data = await res.json();
+      if (!data.ok) return showStatus(data.error, false);
+      document.getElementById("csvStatus").textContent = "已上傳 CSV：" + data.filename;
+      showStatus("CSV 上傳成功：" + data.filename);
+    }
+
+    async function parseInvoicePreview() {
+      const text = document.getElementById("invoiceText").value;
+      const res = await fetch("/api/parse-invoice-text", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text })
+      });
+      const data = await res.json();
+      if (!data.ok) return showStatus(data.error, false);
+      const inv = data.invoice;
+      const box = document.getElementById("invoiceParsedBox");
+      box.style.display = "block";
+      box.innerHTML = `
+        <div><strong>發票號碼：</strong>${inv.invoice_no || "(未偵測)"} ｜ <strong>日期：</strong>${inv.roc_date || "(未偵測)"} ｜ <strong>總計：</strong>${inv.total_amount ?? 0} 元</div>
+        <table>
+          <thead><tr><th>品名</th><th>數量</th><th>單價</th><th>小計</th></tr></thead>
+          <tbody>${inv.items.map(i => `<tr><td>${i.name}</td><td>${i.quantity}</td><td>${i.unit_price ?? ""}</td><td>${i.subtotal}</td></tr>`).join("")}</tbody>
+        </table>
+      `;
+    }
+
+    function buildPayload() {
+      const items = [...document.querySelectorAll("#manualTable tbody tr")].map(tr => ({
+        name: tr.querySelector(".m-name").value,
+        spec: tr.querySelector(".m-spec").value,
+        unit: tr.querySelector(".m-unit").value,
+        quantity: tr.querySelector(".m-qty").value,
+        unit_price: tr.querySelector(".m-price").value,
+        subtotal: tr.querySelector(".m-sub").value,
+        note: tr.querySelector(".m-note").value,
+      }));
+      return {
+        mode: currentMode === "scan" ? "manual" : currentMode,
+        budget_code: document.getElementById("budgetCode").value,
+        plan_name: document.getElementById("planName").value,
+        level1: document.getElementById("level1").value,
+        level2: document.getElementById("level2").value,
+        level3: document.getElementById("level3").value,
+        department: document.getElementById("department").value,
+        payer_name: document.getElementById("payerName").value,
+        purpose: document.getElementById("purpose").value,
+        invoice_text: document.getElementById("invoiceText").value,
+        csv_kind: document.getElementById("csvKind").value,
+        source_type: document.getElementById("manualSourceType").value,
+        invoice_no: document.getElementById("manualInvoiceNo").value,
+        receipt_count: document.getElementById("manualReceiptCount").value,
+        request_date: document.getElementById("manualDate").value,
+        items,
+        auto_split: document.getElementById("autoSplit").checked,
+        max_amount: document.getElementById("maxAmount").value,
+      };
+    }
+
+    function renderPreview(reqs) {
+      const area = document.getElementById("previewArea");
+      area.innerHTML = reqs.map((r, idx) => {
+        const needsApproval = r.payer_name && Number(r.total_amount || 0) >= 10000;
+        const warnHtml = needsApproval
+          ? `<div style="margin-top:6px; padding:6px 10px; background:#fef3c7; border:1px solid #fcd34d; color:#92400e; border-radius:4px; font-size:12px; font-weight:600;">⚠ 代墊款項達 10,000 元以上，請依規定檢附專案簽准簽呈！</div>`
+          : "";
+        return `
+        <div style="margin-bottom:10px; padding:10px; border:1px solid var(--border); border-radius:6px;">
+          <strong>單據 #${idx + 1} (${r.request_id})</strong>
+          <span class="badge">${r.source_type}</span>
+          ｜ 科目：${r.budget_code || "-"} ｜ 單位：${r.department || "-"} ｜ 合計：<strong>${r.total_amount} 元</strong> (${r.items.length} 項)
+          ${warnHtml}
+          <table>
+            <thead><tr><th>品名（項目）</th><th>規格</th><th>單位</th><th>數量</th><th>單價</th><th>小計</th><th>備註</th></tr></thead>
+            <tbody>${r.items.map(i => `<tr><td>${i.name}</td><td>${i.spec || ""}</td><td>${i.unit || ""}</td><td>${i.quantity ?? ""}</td><td>${i.unit_price ?? ""}</td><td>${i.subtotal ?? ""}</td><td>${i.note || ""}</td></tr>`).join("")}</tbody>
+          </table>
+        </div>
+      `;
+      }).join("");
+    }
+
+    async function printPreview() {
+      showStatus("正在透過 Excel 產生真實列印預覽，請稍候...");
+      const res = await fetch("/api/print-preview", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(buildPayload())
+      });
+      const data = await res.json();
+      if (!data.ok) return showStatus(data.error, false);
+
+      const box = document.getElementById("printPreviewArea");
+      box.style.display = "block";
+      if (data.mode === "excel_pdf") {
+        box.innerHTML = `
+          <div style="padding:12px; border:1px solid #bfdbfe; background:#eff6ff; border-radius:8px;">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+              <strong>真實 Excel 列印預覽（共 ${data.total_forms} 份，顯示第 1 份，共 ${data.page_urls.length} 頁）</strong>
+              <div style="display:flex; gap:8px;">
+                <a href="${data.pdf_url}" target="_blank" style="padding:6px 12px; background:#1f5f99; color:#fff; border-radius:6px; text-decoration:none; font-size:13px; font-weight:600;">開啟 PDF / 直接列印</a>
+                <button class="secondary" onclick="document.getElementById('printPreviewArea').style.display='none'">關閉預覽</button>
+              </div>
+            </div>
+            <div style="display:flex; flex-direction:column; gap:12px; align-items:center; max-height:680px; overflow-y:auto; background:#cbd5e1; padding:14px; border-radius:6px;">
+              ${data.page_urls.map(u => `<img src="${u}?t=${Date.now()}" style="max-width:100%; background:#fff; box-shadow:0 2px 10px rgba(0,0,0,0.2);" />`).join("")}
+            </div>
+          </div>
+        `;
+        showStatus("真實 Excel 列印預覽已產生！");
+      } else {
+        box.innerHTML = `
+          <div style="padding:12px; border:1px solid var(--border); background:#fff; border-radius:8px;">
+            <strong>表單預覽（HTML 備援模式）</strong>
+            <div style="overflow-x:auto; margin-top:8px;">${data.html}</div>
+          </div>
+        `;
+        showStatus("表單預覽已產生（未使用 Excel COM）");
+      }
+    }
+
+    async function previewForms() {
+      const res = await fetch("/api/preview", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(buildPayload())
+      });
+      const data = await res.json();
+      if (!data.ok) return showStatus(data.error, false);
+      renderPreview(data.requests);
+      showStatus(`預覽完成，共 ${data.requests.length} 張請購單`);
+    }
+
+    async function generateExcel() {
+      const res = await fetch("/api/generate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(buildPayload())
+      });
+      const data = await res.json();
+      if (!data.ok) return showStatus(data.error, false);
+      renderPreview(data.requests);
+      const dl = document.getElementById("downloadArea");
+      const zipUrl = "/api/download-zip?files=" + encodeURIComponent(data.files.join(","));
+      dl.innerHTML = `<strong>下載產出檔案：</strong>` +
+        data.files.map(f => `<a href="/api/download/${encodeURIComponent(f)}">${f}</a>`).join("") +
+        (data.files.length > 1 ? `<a href="${zipUrl}" style="background:#ecfdf5; border-color:#a7f3d0; color:#065f46;">全部打包下載 (.zip)</a>` : "");
+      showStatus(`成功產出 ${data.files.length} 份 Excel 請購單！`);
+      await loadHistory();
+    }
+
+    async function loadHistory() {
+      const res = await fetch("/api/history");
+      const data = await res.json();
+      if (!data.ok) return;
+      renderHistory(data.records, data.summary);
+    }
+
+    function renderHistory(records, summary) {
+      document.getElementById("historyCountBadge").textContent = summary.total_count ?? records.length;
+      const sumBox = document.getElementById("historySummary");
+      const byCode = Object.entries(summary.by_budget_code || {})
+        .map(([k, v]) => `<span class="badge">${k}: NT$ ${Number(v).toLocaleString()}</span>`)
+        .join(" ");
+      sumBox.innerHTML = `
+        <span class="badge ok">累積張數：${summary.total_count} 張</span>
+        <span class="badge ok">累積總金額：NT$ ${Number(summary.total_amount).toLocaleString()}</span>
+        ${byCode}
+      `;
+
+      const tbody = document.querySelector("#historyTable tbody");
+      if (!records.length) {
+        tbody.innerHTML = `<tr><td colspan="9" style="text-align:center; color:var(--muted);">尚無累積紀錄，產出 Excel 後會自動記錄於此。</td></tr>`;
+        return;
+      }
+      tbody.innerHTML = records.map(r => `
+        <tr>
+          <td style="white-space:nowrap;">${r.created_at}</td>
+          <td>${r.request_id}</td>
+          <td><span class="badge">${r.source_type}</span></td>
+          <td>${r.budget_code || "-"}</td>
+          <td>${r.department || "-"}</td>
+          <td>${r.payer_name || "-"}</td>
+          <td>${r.purpose ? `<strong>${r.purpose}</strong><br>` : ""}<span style="color:var(--muted); font-size:12px;">${r.items_summary || ""}</span></td>
+          <td style="text-align:right; font-weight:600;">${Number(r.total_amount || 0).toLocaleString()}</td>
+          <td style="white-space:nowrap;">
+            <a href="/api/download/${encodeURIComponent(r.output_file)}" style="font-size:12px; margin-right:6px;">下載</a>
+            <button class="secondary" onclick="deleteHistoryItem('${r.id}')" style="padding:3px 8px; font-size:12px;">刪除</button>
+          </td>
+        </tr>
+      `).join("");
+    }
+
+    async function deleteHistoryItem(id) {
+      const res = await fetch(`/api/history/${encodeURIComponent(id)}`, { method: "DELETE" });
+      const data = await res.json();
+      if (data.ok) renderHistory(data.records, data.summary);
+    }
+
+    async function clearHistoryAll() {
+      if (!confirm("確定要清空所有累積採購紀錄嗎？（已產出的 Excel 檔案不會被刪除）")) return;
+      const res = await fetch("/api/history/clear", { method: "POST" });
+      const data = await res.json();
+      if (data.ok) renderHistory(data.records, data.summary);
+    }
+
+    loadHistory();
+
+    async function openOutputFolder() {
+      await fetch("/api/open-output", { method: "POST" });
+    }
+
+    async function shutdownApp() {
+      await fetch("/api/shutdown", { method: "POST" });
+      window.close();
+      document.body.innerHTML = "<div style='padding:40px; text-align:center;'><h2>程式已關閉，您可以關閉此視窗。</h2></div>";
+    }
+  </script>
+</body>
+</html>
+
