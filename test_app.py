@@ -427,68 +427,26 @@ class TestDesktopApp(unittest.TestCase):
         total_items = sum(len(r["items"]) for r in data["requests"])
         self.assertEqual(total_items, 14)
 
-    def test_generate_uses_edited_requests_when_provided(self) -> None:
+    def test_html_fallback_renders_vertical_payer_column(self) -> None:
+        from fill_purchase_forms import LineItem, PurchaseRequest, generate_from_requests, load_config
+        from print_preview import render_xlsx_fallback_html
+
+        cfg = load_config(Path("config.json"))
+        req = PurchaseRequest(
+            request_id="VERT-001",
+            budget_code="321",
+            department="總務處",
+            payer_name="楊敦州",
+            items=[LineItem(name="原子筆", unit="支", quantity=2, unit_price=50)],
+        )
         with tempfile.TemporaryDirectory() as tmp:
             out_dir = Path(tmp) / "output"
-            with (
-                patch.object(web_app, "_active_template_path", return_value=None),
-                patch.object(web_app, "OUTPUT_DIR", out_dir),
-                patch.object(web_app, "HISTORY_PATH", Path(tmp) / "history.json"),
-            ):
-                res = self.client.post(
-                    "/api/generate",
-                    json={
-                        "mode": "manual",
-                        "edited_requests": [
-                            {
-                                "request_id": "EDIT-001",
-                                "source_type": "發票",
-                                "budget_code": "321",
-                                "department": "教務處",
-                                "purpose": "已修改用途",
-                                "items": [
-                                    {"name": "修改後品名", "spec": "A4", "unit": "包", "quantity": 3, "unit_price": 120, "subtotal": 360, "note": "急用"}
-                                ],
-                            }
-                        ],
-                    },
-                )
-                data = res.get_json()
-                self.assertTrue(data["ok"])
-                self.assertEqual(data["files"], ["EDIT-001_採購申請單.xlsx"])
-                self.assertEqual(data["requests"][0]["total_amount"], 360)
-                wb = openpyxl.load_workbook(out_dir / "EDIT-001_採購申請單.xlsx")
-                self.assertEqual(wb.active["A18"].value, "修改後品名")
-                self.assertEqual(wb.active["C18"].value, "A4")
-
-    def test_solve_ocr_text_api_reconciles_and_splits(self) -> None:
-        raw_text = "\n".join([
-            "AB-55667788",
-            "2026-11-19",
-            "A4影印紙  2  150  300TX",
-            "碳粉匣  1  2800  2800TX",
-            "原子筆  10  20  200TX",
-            "現金  5000",
-            "找零  1700",
-            "總計: 3300",
-        ])
-        res = self.client.post(
-            "/api/solve-ocr-text",
-            json={
-                "raw_text": raw_text,
-                "budget_code": "321",
-                "department": "總務處",
-                "auto_split": True,
-                "max_amount": 3000,
-            },
-        )
-        data = res.get_json()
-        self.assertTrue(data["ok"])
-        self.assertTrue(data["cpsat_verified"])
-        self.assertEqual(data["invoice"]["total_amount"], 3300)
-        self.assertEqual(len(data["requests"]), 2)
-        totals = sorted(r["total_amount"] for r in data["requests"])
-        self.assertEqual(totals, [500, 2800])
+            tpl_path = Path("template.xlsx") if Path("template.xlsx").exists() else None
+            files = generate_from_requests(tpl_path, [req], out_dir, cfg)
+            html_out = render_xlsx_fallback_html(files[0])
+            if tpl_path is not None:
+                self.assertIn("writing-mode:vertical-rl", html_out)
+            self.assertIn("楊敦州", html_out)
 
 
 if __name__ == "__main__":

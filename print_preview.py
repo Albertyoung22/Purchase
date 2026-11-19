@@ -158,38 +158,60 @@ def _eval_simple_formula(ws: openpyxl.worksheet.worksheet.Worksheet, val: object
 
 def render_xlsx_fallback_html(xlsx_path: Path) -> str:
     """Fallback HTML table preview if Microsoft Excel COM is not available (e.g. Render Linux)."""
+    import html
+
     wb = openpyxl.load_workbook(xlsx_path, data_only=False)
-    ws = wb.active
+    try:
+        ws = wb.active
 
-    merged_skip: set[tuple[int, int]] = set()
-    merged_span: dict[tuple[int, int], tuple[int, int]] = {}
-    for rng in ws.merged_cells.ranges:
-        merged_span[(rng.min_row, rng.min_col)] = (
-            rng.max_row - rng.min_row + 1,
-            rng.max_col - rng.min_col + 1,
-        )
-        for r in range(rng.min_row, rng.max_row + 1):
-            for c in range(rng.min_col, rng.max_col + 1):
-                if (r, c) != (rng.min_row, rng.min_col):
-                    merged_skip.add((r, c))
+        merged_skip: set[tuple[int, int]] = set()
+        merged_span: dict[tuple[int, int], tuple[int, int]] = {}
+        for rng in ws.merged_cells.ranges:
+            merged_span[(rng.min_row, rng.min_col)] = (
+                rng.max_row - rng.min_row + 1,
+                rng.max_col - rng.min_col + 1,
+            )
+            for r in range(rng.min_row, rng.max_row + 1):
+                for c in range(rng.min_col, rng.max_col + 1):
+                    if (r, c) != (rng.min_row, rng.min_col):
+                        merged_skip.add((r, c))
 
-    rows_html: list[str] = []
-    for r in range(1, min(ws.max_row, 40) + 1):
-        if ws.row_dimensions[r].hidden:
-            continue
-        cells_html: list[str] = []
-        for c in range(1, min(ws.max_column, 10) + 1):
-            if (r, c) in merged_skip:
+        rows_html: list[str] = []
+        for r in range(1, min(ws.max_row, 40) + 1):
+            if ws.row_dimensions[r].hidden:
                 continue
-            rs, cs = merged_span.get((r, c), (1, 1))
-            text = _eval_simple_formula(ws, ws.cell(r, c).value)
-            attrs = ""
-            if rs > 1:
-                attrs += f' rowspan="{rs}"'
-            if cs > 1:
-                attrs += f' colspan="{cs}"'
-            cells_html.append(f"<td{attrs}>{text}</td>")
-        rows_html.append("<tr>" + "".join(cells_html) + "</tr>")
+            cells_html: list[str] = []
+            for c in range(1, min(ws.max_column, 10) + 1):
+                if (r, c) in merged_skip:
+                    continue
+                rs, cs = merged_span.get((r, c), (1, 1))
+                cell = ws.cell(r, c)
+                text = html.escape(_eval_simple_formula(ws, cell.value))
+                attrs = ""
+                if rs > 1:
+                    attrs += f' rowspan="{rs}"'
+                if cs > 1:
+                    attrs += f' colspan="{cs}"'
 
-    return f'<table class="excel-fallback">{"".join(rows_html)}</table>'
+                styles: list[str] = []
+                al = cell.alignment
+                if al and al.text_rotation == 255:
+                    styles.append(
+                        "writing-mode:vertical-rl;text-orientation:upright;"
+                        "width:28px;min-width:28px;max-width:34px;"
+                        "white-space:nowrap;vertical-align:top;padding:6px 3px;"
+                    )
+                elif al and al.horizontal in ("left", "right", "center"):
+                    styles.append(f"text-align:{al.horizontal};")
+                if cell.font and cell.font.bold:
+                    styles.append("font-weight:700;")
+                if styles:
+                    attrs += f' style="{"".join(styles)}"'
+
+                cells_html.append(f"<td{attrs}>{text}</td>")
+            rows_html.append("<tr>" + "".join(cells_html) + "</tr>")
+
+        return f'<table class="excel-fallback">{"".join(rows_html)}</table>'
+    finally:
+        wb.close()
 
