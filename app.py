@@ -563,6 +563,8 @@ def api_preview_file(filename: str):
     target = (preview_dir / filename).resolve()
     if target.parent != preview_dir.resolve() or not target.exists():
         return jsonify({"ok": False, "error": "找不到預覽檔案"}), 404
+    if target.suffix.lower() == ".pdf":
+        return send_file(target, mimetype="application/pdf", as_attachment=False)
     return send_file(target)
 
 
