@@ -12,27 +12,42 @@ import openpyxl
 
 def export_xlsx_to_pdf_with_libreoffice(xlsx_path: Path, pdf_path: Path, timeout_sec: int = 60) -> bool:
     """Use LibreOffice Calc headless mode (Linux/Render) to export .xlsx to PDF."""
+    import tempfile
+
     soffice = shutil.which("soffice") or shutil.which("libreoffice")
     if not soffice:
         return False
 
     pdf_path.parent.mkdir(parents=True, exist_ok=True)
-    proc = subprocess.run(
-        [
-            soffice,
-            "--headless",
-            "--nologo",
-            "--nofirststartwizard",
-            "--convert-to",
-            "pdf",
-            "--outdir",
-            str(pdf_path.parent.resolve()),
-            str(xlsx_path.resolve()),
-        ],
-        capture_output=True,
-        text=True,
-        timeout=timeout_sec,
-    )
+
+    # LibreOffice does not auto-rotate ASCII '(' ')' in vertical CJK cells (e.g. J8 '(簽章)').
+    # Convert to vertical presentation forms '︵' '︶' on a temporary copy before PDF export.
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp_xlsx = Path(tmp) / xlsx_path.name
+        wb = openpyxl.load_workbook(xlsx_path)
+        for ws in wb.worksheets:
+            for coord in ("J8", "J7", "J9"):
+                val = ws[coord].value
+                if isinstance(val, str) and "簽章" in val:
+                    ws[coord].value = val.replace("(", "︵").replace(")", "︶").replace("（", "︵").replace("）", "︶")
+        wb.save(tmp_xlsx)
+
+        proc = subprocess.run(
+            [
+                soffice,
+                "--headless",
+                "--nologo",
+                "--nofirststartwizard",
+                "--convert-to",
+                "pdf",
+                "--outdir",
+                str(pdf_path.parent.resolve()),
+                str(tmp_xlsx.resolve()),
+            ],
+            capture_output=True,
+            text=True,
+            timeout=timeout_sec,
+        )
     expected = pdf_path.parent / f"{xlsx_path.stem}.pdf"
     if proc.returncode == 0 and expected.exists():
         if expected.resolve() != pdf_path.resolve():
