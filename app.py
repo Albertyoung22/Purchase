@@ -23,6 +23,7 @@ from waitress import serve
 from fill_purchase_forms import (
     LineItem,
     PurchaseRequest,
+    chunk_requests_by_max_rows,
     generate_from_requests,
     invoices_to_requests,
     load_config,
@@ -520,10 +521,12 @@ def api_preview():
         payload = request.get_json(force=True)
         cfg = load_config(CONFIG_PATH)
         reqs = _requests_from_payload(payload, cfg)
+        max_rows = int(cfg["items_table"]["max_rows"])
         if payload.get("auto_split"):
             max_amount = float(payload.get("max_amount") or 3000)
-            max_rows = int(cfg["items_table"]["max_rows"])
             reqs = split_requests_opt(reqs, max_amount=max_amount, max_rows=max_rows)
+        else:
+            reqs = chunk_requests_by_max_rows(reqs, max_rows=max_rows)
         return jsonify({"ok": True, "requests": _serialize_requests(reqs)})
     except Exception as exc:
         return jsonify({"ok": False, "error": str(exc)}), 400
@@ -536,10 +539,12 @@ def api_generate():
         payload = request.get_json(force=True)
         cfg = load_config(CONFIG_PATH)
         reqs = _requests_from_payload(payload, cfg)
+        max_rows = int(cfg["items_table"]["max_rows"])
         if payload.get("auto_split"):
             max_amount = float(payload.get("max_amount") or 3000)
-            max_rows = int(cfg["items_table"]["max_rows"])
             reqs = split_requests_opt(reqs, max_amount=max_amount, max_rows=max_rows)
+        else:
+            reqs = chunk_requests_by_max_rows(reqs, max_rows=max_rows)
 
         files = generate_from_requests(tpl, reqs, OUTPUT_DIR, cfg)
         append_history(HISTORY_PATH, reqs, files)
@@ -568,10 +573,12 @@ def api_print_preview():
         payload = request.get_json(force=True)
         cfg = load_config(CONFIG_PATH)
         reqs = _requests_from_payload(payload, cfg)
+        max_rows = int(cfg["items_table"]["max_rows"])
         if payload.get("auto_split"):
             max_amount = float(payload.get("max_amount") or 3000)
-            max_rows = int(cfg["items_table"]["max_rows"])
             reqs = split_requests_opt(reqs, max_amount=max_amount, max_rows=max_rows)
+        else:
+            reqs = chunk_requests_by_max_rows(reqs, max_rows=max_rows)
 
         preview_dir = OUTPUT_DIR / "_preview"
         preview_dir.mkdir(parents=True, exist_ok=True)

@@ -629,6 +629,40 @@ def keep_only_sheet(wb: openpyxl.Workbook, target_ws: Worksheet) -> None:
             wb.remove(wb[name])
 
 
+def chunk_requests_by_max_rows(
+    requests: list[PurchaseRequest],
+    max_rows: int = 7,
+) -> list[PurchaseRequest]:
+    """Automatically split any request with > max_rows items into sequential sheets of max_rows."""
+    result: list[PurchaseRequest] = []
+    for req in requests:
+        if len(req.items) <= max_rows:
+            result.append(req)
+            continue
+        total_parts = (len(req.items) + max_rows - 1) // max_rows
+        for part_idx in range(total_parts):
+            chunk = req.items[part_idx * max_rows : (part_idx + 1) * max_rows]
+            result.append(
+                PurchaseRequest(
+                    request_id=f"{req.request_id}-{part_idx + 1}",
+                    source_type=req.source_type,
+                    sheet_name=req.sheet_name,
+                    budget_code=req.budget_code,
+                    plan_name=req.plan_name,
+                    level1=req.level1,
+                    level2=req.level2,
+                    level3=req.level3,
+                    department=req.department,
+                    request_date=req.request_date,
+                    payer_name=req.payer_name,
+                    receipt_count=req.receipt_count if part_idx == 0 else None,
+                    purpose=f"{req.purpose} ({part_idx + 1}/{total_parts})" if req.purpose else f"第 {part_idx + 1}/{total_parts} 張",
+                    items=chunk,
+                )
+            )
+    return result
+
+
 def generate_from_requests(
     template_path: Path | None,
     requests: list[PurchaseRequest],
@@ -640,8 +674,10 @@ def generate_from_requests(
 
     output_dir.mkdir(parents=True, exist_ok=True)
     only_target = bool(cfg.get("keep_only_target_sheet", True))
+    max_rows = int(cfg["items_table"]["max_rows"])
+    chunked_requests = chunk_requests_by_max_rows(requests, max_rows=max_rows)
     generated_files: list[Path] = []
-    for req in requests:
+    for req in chunked_requests:
         safe_id = sanitize_filename(req.request_id)
         out_path = output_dir / f"{safe_id}_採購申請單.xlsx"
         if template_path is None:

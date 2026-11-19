@@ -395,6 +395,32 @@ class TestFillPurchaseForms(unittest.TestCase):
             self.assertEqual(out_ws["H28"].value, "=SUM(H21:H27)")
             self.assertEqual(out_ws["A30"].value, "小北百貨採購")
 
+    def test_over_7_items_auto_chunks_into_multiple_forms(self) -> None:
+        base_dir = Path(__file__).parent
+        cfg = load_config(base_dir / "config.json")
+        req = PurchaseRequest(
+            request_id="MANY-10",
+            budget_code="321",
+            department="總務處",
+            purpose="多品項採購",
+            items=[
+                LineItem(name=f"文具品項{i}", unit="個", quantity=1, unit_price=100)
+                for i in range(1, 11)
+            ],
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            out_dir = Path(tmp) / "output"
+            files = generate_from_requests(None, [req], out_dir, cfg)
+            self.assertEqual(len(files), 2)
+            self.assertEqual(files[0].name, "MANY-10-1_採購申請單.xlsx")
+            self.assertEqual(files[1].name, "MANY-10-2_採購申請單.xlsx")
+            wb1 = openpyxl.load_workbook(files[0])
+            wb2 = openpyxl.load_workbook(files[1])
+            self.assertEqual(wb1.active["A18"].value, "文具品項1")
+            self.assertEqual(wb1.active["A24"].value, "文具品項7")
+            self.assertEqual(wb2.active["A18"].value, "文具品項8")
+            self.assertEqual(wb2.active["A20"].value, "文具品項10")
+
 
 if __name__ == "__main__":
     unittest.main()
