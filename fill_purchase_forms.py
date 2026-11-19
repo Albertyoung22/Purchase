@@ -302,6 +302,30 @@ def _hide_instruction_row(ws: Worksheet) -> None:
         ws.row_dimensions[1].hidden = True
 
 
+def _configure_single_page_print(ws: Worksheet) -> None:
+    """Ensure the filled form fits cleanly on 1 A4 portrait page in both Excel and LibreOffice."""
+    last_row = 30
+    for r in range(ws.max_row, 1, -1):
+        if any(ws.cell(r, c).value is not None for c in range(1, 11)):
+            last_row = r
+            break
+
+    start_row = 2 if ws.row_dimensions[1].hidden else 1
+    ws.print_area = f"A{start_row}:J{last_row}"
+    ws.page_setup.paperSize = ws.PAPERSIZE_A4
+    ws.page_setup.orientation = ws.ORIENTATION_PORTRAIT
+    ws.page_setup.fitToWidth = 1
+    ws.page_setup.fitToHeight = 1
+    ws.page_setup.scale = None
+    ws.sheet_properties.pageSetUpPr.fitToPage = True
+    ws.page_margins.left = 0.25
+    ws.page_margins.right = 0.25
+    ws.page_margins.top = 0.3
+    ws.page_margins.bottom = 0.3
+    ws.page_margins.header = 0.15
+    ws.page_margins.footer = 0.15
+
+
 def fill_worksheet(ws: Worksheet, req: PurchaseRequest, cfg: dict[str, Any]) -> None:
     """Populate a single worksheet with a PurchaseRequest's data."""
     _hide_instruction_row(ws)
@@ -386,6 +410,7 @@ def fill_worksheet(ws: Worksheet, req: PurchaseRequest, cfg: dict[str, Any]) -> 
         safe_set_cell(ws, layout["total_coord"], req.total_amount)
     if cells.get("header_amount"):
         safe_set_cell(ws, cells["header_amount"], req.total_amount)
+    _configure_single_page_print(ws)
 
 
 def sanitize_filename(name: str) -> str:
