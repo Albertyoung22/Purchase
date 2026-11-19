@@ -3,10 +3,42 @@
 from __future__ import annotations
 
 import os
+import shutil
 import subprocess
 from pathlib import Path
 
 import openpyxl
+
+
+def export_xlsx_to_pdf_with_libreoffice(xlsx_path: Path, pdf_path: Path, timeout_sec: int = 60) -> bool:
+    """Use LibreOffice Calc headless mode (Linux/Render) to export .xlsx to PDF."""
+    soffice = shutil.which("soffice") or shutil.which("libreoffice")
+    if not soffice:
+        return False
+
+    pdf_path.parent.mkdir(parents=True, exist_ok=True)
+    proc = subprocess.run(
+        [
+            soffice,
+            "--headless",
+            "--nologo",
+            "--nofirststartwizard",
+            "--convert-to",
+            "pdf",
+            "--outdir",
+            str(pdf_path.parent.resolve()),
+            str(xlsx_path.resolve()),
+        ],
+        capture_output=True,
+        text=True,
+        timeout=timeout_sec,
+    )
+    expected = pdf_path.parent / f"{xlsx_path.stem}.pdf"
+    if proc.returncode == 0 and expected.exists():
+        if expected.resolve() != pdf_path.resolve():
+            expected.replace(pdf_path)
+        return True
+    return False
 
 
 def export_xlsx_to_pdf_with_excel(xlsx_path: Path, pdf_path: Path, timeout_sec: int = 30) -> bool:
@@ -39,6 +71,13 @@ def export_xlsx_to_pdf_with_excel(xlsx_path: Path, pdf_path: Path, timeout_sec: 
         timeout=timeout_sec,
     )
     return proc.returncode == 0 and pdf_path.exists()
+
+
+def export_xlsx_to_pdf(xlsx_path: Path, pdf_path: Path) -> bool:
+    """Export .xlsx to PDF using Microsoft Excel on Windows, or LibreOffice on Linux/Render."""
+    if os.name == "nt" and export_xlsx_to_pdf_with_excel(xlsx_path, pdf_path):
+        return True
+    return export_xlsx_to_pdf_with_libreoffice(xlsx_path, pdf_path)
 
 
 def render_pdf_to_pngs(pdf_path: Path, out_dir: Path, prefix: str = "preview") -> list[Path]:

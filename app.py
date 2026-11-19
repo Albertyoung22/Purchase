@@ -43,7 +43,7 @@ from history_store import (
 from invoice_parser import parse_einvoice_csv, parse_invoice_text
 from ocr_scanner import scan_document
 from print_preview import (
-    export_xlsx_to_pdf_with_excel,
+    export_xlsx_to_pdf,
     render_pdf_to_pngs,
     render_xlsx_fallback_html,
 )
@@ -579,7 +579,7 @@ def api_print_preview():
         first_xlsx = files[0]
         pdf_path = preview_dir / f"{first_xlsx.stem}.pdf"
 
-        if export_xlsx_to_pdf_with_excel(first_xlsx, pdf_path):
+        if export_xlsx_to_pdf(first_xlsx, pdf_path):
             pngs = render_pdf_to_pngs(pdf_path, preview_dir, prefix=first_xlsx.stem)
             return jsonify({
                 "ok": True,
