@@ -461,6 +461,35 @@ class TestDesktopApp(unittest.TestCase):
                 self.assertEqual(wb.active["A18"].value, "修改後品名")
                 self.assertEqual(wb.active["C18"].value, "A4")
 
+    def test_solve_ocr_text_api_reconciles_and_splits(self) -> None:
+        raw_text = "\n".join([
+            "AB-55667788",
+            "2026-11-19",
+            "A4影印紙  2  150  300TX",
+            "碳粉匣  1  2800  2800TX",
+            "原子筆  10  20  200TX",
+            "現金  5000",
+            "找零  1700",
+            "總計: 3300",
+        ])
+        res = self.client.post(
+            "/api/solve-ocr-text",
+            json={
+                "raw_text": raw_text,
+                "budget_code": "321",
+                "department": "總務處",
+                "auto_split": True,
+                "max_amount": 3000,
+            },
+        )
+        data = res.get_json()
+        self.assertTrue(data["ok"])
+        self.assertTrue(data["cpsat_verified"])
+        self.assertEqual(data["invoice"]["total_amount"], 3300)
+        self.assertEqual(len(data["requests"]), 2)
+        totals = sorted(r["total_amount"] for r in data["requests"])
+        self.assertEqual(totals, [500, 2800])
+
 
 if __name__ == "__main__":
     unittest.main()

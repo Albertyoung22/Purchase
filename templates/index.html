@@ -589,12 +589,51 @@
             <thead><tr><th>品名（項目）</th><th style="width:110px;">規格</th><th style="width:65px;">單位</th><th style="width:70px;">數量</th><th style="width:85px;">單價</th><th style="width:85px;">小計</th><th style="width:100px;">備註</th><th style="width:60px;">操作</th></tr></thead>
             <tbody></tbody>
           </table>
-          <details style="margin-top:6px;"><summary>檢視原始 OCR / PDF 文字</summary><pre>${escAttr(data.raw_text)}</pre></details>
+          <details open style="margin-top:8px;">
+            <summary style="cursor:pointer; font-weight:600;">檢視 / 修改原始 OCR / PDF 文字（支援 OR-Tools CP-SAT 重新求解）</summary>
+            <textarea id="scanRawTextEditor" style="margin-top:6px; min-height:110px;">${escAttr(data.raw_text)}</textarea>
+            <div style="margin-top:6px; display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+              <button type="button" class="accent" onclick="solveRawTextWithCpsat()">以 OR-Tools CP-SAT 求解並成為預覽分單結果</button>
+              <span style="font-size:12px; color:var(--muted);">若 OCR 文字有誤字或漏行，可直接在上方修改文字後點此鈕重新核對金額並最佳化分單。</span>
+            </div>
+          </details>
         </div>
       `;
       scanRows.forEach(it => addScanResultRow(it.name, it.quantity ?? 1, it.unit_price ?? "", it.unit_price == null ? (it.subtotal ?? "") : (it.subtotal ?? ""), it.spec || "", it.unit || "", it.note || "", false));
       syncScanTableToManual();
-      showStatus(`掃描完成！總金額 ${inv.total_amount ?? 0} 元 → 自動選用「${data.recommended_sheet}」（可直接於下方表格修改）`);
+      await previewForms();
+      showStatus(`掃描完成！總金額 ${inv.total_amount ?? 0} 元 → 自動選用「${data.recommended_sheet}」，已產生可編輯的預覽分單結果`);
+    }
+
+    async function solveRawTextWithCpsat() {
+      const rawText = (document.getElementById("scanRawTextEditor")?.value || "").trim();
+      if (!rawText) return showStatus("請先輸入或保留原始 OCR / PDF 文字", false);
+      showStatus("正在使用 Google OR-Tools CP-SAT 求解金額核對與最佳化分單...");
+      const base = buildPayload(false);
+      base.raw_text = rawText;
+      const res = await fetch("/api/solve-ocr-text", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(base),
+      });
+      const data = await res.json();
+      if (!data.ok) return showStatus(data.error, false);
+
+      const inv = data.invoice;
+      if (inv.invoice_no) document.getElementById("manualInvoiceNo").value = inv.invoice_no;
+      if (inv.roc_date) document.getElementById("manualDate").value = inv.roc_date;
+
+      const scanTbody = document.querySelector("#scanEditableTable tbody");
+      if (scanTbody) {
+        scanTbody.innerHTML = "";
+        const rows = (inv.items && inv.items.length)
+          ? inv.items
+          : [{ name: "發票採購", spec: "", unit: "批", quantity: 1, unit_price: "", subtotal: inv.total_amount ?? "", note: "" }];
+        rows.forEach(it => addScanResultRow(it.name, it.quantity ?? 1, it.unit_price ?? "", it.subtotal ?? "", it.spec || "", it.unit || "", it.note || "", false));
+        syncScanTableToManual();
+      }
+      renderPreview(data.requests);
+      showStatus(`OR-Tools CP-SAT 求解完成${data.cpsat_verified ? "（金額核對相符）" : ""}，已更新為 ${data.requests.length} 張預覽分單結果！`);
     }
 
     function addScanResultRow(name = "", qty = "1", price = "", sub = "", spec = "", unit = "個", note = "", doSync = true) {

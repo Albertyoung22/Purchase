@@ -42,7 +42,8 @@ from history_store import (
     load_history,
     summarize_history,
 )
-from invoice_parser import parse_einvoice_csv, parse_invoice_text
+from invoice_parser import ParsedInvoice, parse_einvoice_csv, parse_invoice_text
+from ocr_cpsat_parser import extract_candidates_from_text, reconcile_items_with_cpsat
 from ocr_scanner import scan_document
 from print_preview import (
     export_xlsx_to_pdf,
@@ -603,6 +604,80 @@ def _prepare_requests_from_payload(payload: dict[str, Any], cfg: dict[str, Any])
         max_amount = float(payload.get("max_amount") or 3000)
         return split_requests_opt(reqs, max_amount=max_amount, max_rows=max_rows)
     return chunk_requests_by_max_rows(reqs, max_rows=max_rows)
+
+
+@app.post("/api/solve-ocr-text")
+def api_solve_ocr_text():
+    """Re-parse edited raw OCR/PDF text with OR-Tools CP-SAT reconciliation and form splitting."""
+    try:
+        payload = request.get_json(force=True)
+        raw_text = str(payload.get("raw_text", "")).strip()
+        if not raw_text:
+            raise ValueError("請提供原始 OCR / PDF 文字內容")
+
+        cfg = load_config(CONFIG_PATH)
+        max_rows = int(cfg["items_table"]["max_rows"])
+        auto_split = bool(payload.get("auto_split", True))
+        max_amount = float(payload.get("max_amount") or 3000)
+
+        parsed = parse_invoice_text(raw_text)
+        candidates = extract_candidates_from_text(raw_text, parsed)
+        selected_items, verified = reconcile_items_with_cpsat(candidates, parsed.total_amount)
+        if selected_items:
+            parsed.items = selected_items
+        if parsed.total_amount is None and parsed.items:
+            tot = sum(it.subtotal for it in parsed.items)
+            parsed.total_amount = int(tot) if float(tot).is_integer() else tot
+
+        reqs = invoices_to_requests(
+            [parsed],
+            budget_code=str(payload.get("budget_code", "")),
+            department=str(payload.get("department", "")),
+            payer_name=str(payload.get("payer_name", "")),
+            purpose=str(payload.get("purpose", "")),
+            max_rows=max_rows,
+            summarize_over_max=not auto_split,
+        )
+        for r in reqs:
+            if payload.get("plan_name"):
+                r.plan_name = str(payload["plan_name"]).strip()
+            if payload.get("level1"):
+                r.level1 = str(payload["level1"]).strip()
+            if payload.get("level2"):
+                r.level2 = str(payload["level2"]).strip()
+            if payload.get("level3"):
+                r.level3 = str(payload["level3"]).strip()
+
+        if auto_split:
+            reqs = split_requests_opt(reqs, max_amount=max_amount, max_rows=max_rows)
+        else:
+            reqs = chunk_requests_by_max_rows(reqs, max_rows=max_rows)
+
+        return jsonify({
+            "ok": True,
+            "cpsat_verified": verified,
+            "invoice": {
+                "invoice_no": parsed.invoice_no,
+                "roc_date": parsed.roc_date,
+                "seller_name": parsed.seller_name,
+                "total_amount": parsed.total_amount,
+                "items": [
+                    {
+                        "name": it.name,
+                        "spec": it.spec,
+                        "unit": it.unit,
+                        "quantity": it.quantity,
+                        "unit_price": it.unit_price,
+                        "subtotal": it.subtotal,
+                        "note": it.note,
+                    }
+                    for it in parsed.items
+                ],
+            },
+            "requests": _serialize_requests(reqs),
+        })
+    except Exception as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 400
 
 
 @app.post("/api/preview")
