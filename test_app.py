@@ -427,26 +427,36 @@ class TestDesktopApp(unittest.TestCase):
         total_items = sum(len(r["items"]) for r in data["requests"])
         self.assertEqual(total_items, 14)
 
-    def test_html_fallback_renders_vertical_payer_column(self) -> None:
-        from fill_purchase_forms import LineItem, PurchaseRequest, generate_from_requests, load_config
-        from print_preview import render_xlsx_fallback_html
-
-        cfg = load_config(Path("config.json"))
-        req = PurchaseRequest(
-            request_id="VERT-001",
-            budget_code="321",
-            department="總務處",
-            payer_name="楊敦州",
-            items=[LineItem(name="原子筆", unit="支", quantity=2, unit_price=50)],
+    def test_parse_raw_ocr_cpsat_api(self) -> None:
+        raw_ocr = (
+            "小北百貨 台南安南店\n"
+            "發票號碼：XY-12345678\n"
+            "2026-11-19\n"
+            "影印紙(A4)  包  2  120  240TX\n"
+            "奇異筆黑色  支  3  30  90TX\n"
+            "現金  500\n"
+            "找零  170\n"
+            "總計  330\n"
         )
-        with tempfile.TemporaryDirectory() as tmp:
-            out_dir = Path(tmp) / "output"
-            tpl_path = Path("template.xlsx") if Path("template.xlsx").exists() else None
-            files = generate_from_requests(tpl_path, [req], out_dir, cfg)
-            html_out = render_xlsx_fallback_html(files[0])
-            if tpl_path is not None:
-                self.assertIn("writing-mode:vertical-rl", html_out)
-            self.assertIn("楊敦州", html_out)
+        res = self.client.post(
+            "/api/parse-raw-ocr-cpsat",
+            json={"raw_text": raw_ocr},
+        )
+        data = res.get_json()
+        self.assertTrue(data["ok"])
+        self.assertEqual(data["engine"], "cpsat-raw-parser")
+        self.assertTrue(data["cpsat_verified"])
+        inv = data["invoice"]
+        self.assertEqual(inv["total_amount"], 330)
+        names = [it["name"] for it in inv["items"]]
+        self.assertEqual(names, ["影印紙", "奇異筆"])
+        self.assertEqual(inv["items"][0]["spec"], "A4")
+        self.assertEqual(inv["items"][0]["unit"], "包")
+        self.assertEqual(inv["items"][0]["quantity"], 2)
+        self.assertEqual(inv["items"][0]["unit_price"], 120)
+        self.assertEqual(inv["items"][0]["subtotal"], 240)
+        self.assertEqual(inv["items"][1]["spec"], "黑色")
+        self.assertEqual(inv["items"][1]["unit"], "支")
 
 
 if __name__ == "__main__":

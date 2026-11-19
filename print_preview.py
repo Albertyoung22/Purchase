@@ -60,27 +60,43 @@ def export_xlsx_to_pdf_with_excel(xlsx_path: Path, pdf_path: Path, timeout_sec: 
     """Use installed Microsoft Excel COM to export an .xlsx file to an exact print-layout PDF."""
     if os.name != "nt":
         return False
+    import base64
+
     xlsx_abs = str(xlsx_path.resolve()).replace("'", "''")
     pdf_abs = str(pdf_path.resolve()).replace("'", "''")
     pdf_path.parent.mkdir(parents=True, exist_ok=True)
 
     ps_script = (
-        "$excel = $null; $wb = $null; "
+        "$ErrorActionPreference = 'Stop'; "
+        "function Invoke-Retry([scriptblock]$Action) { "
+        "for ($i = 0; $i -lt 12; $i++) { "
+        "try { return (& $Action) } catch { "
+        "if (($_.Exception.ToString() -match 'RPC_E_CALL_REJECTED|0x80010001') -and $i -lt 11) { Start-Sleep -Milliseconds 400; continue }; "
+        "throw "
+        "} } }; "
+        "$excel = $null; $wb = $null; $excelPid = $null; "
         "try { "
+        "$beforePids = @(Get-Process -Name EXCEL -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Id); "
         "$excel = New-Object -ComObject Excel.Application; "
+        "$afterPids = @(Get-Process -Name EXCEL -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Id); "
+        "$newPids = @($afterPids | Where-Object { $beforePids -notcontains $_ }); "
+        "if ($newPids.Count -eq 1) { $excelPid = $newPids[0] }; "
         "$excel.Visible = $false; "
         "$excel.DisplayAlerts = $false; "
-        f"$wb = $excel.Workbooks.Open('{xlsx_abs}'); "
-        "$wb.RefreshAll(); "
-        f"$wb.ExportAsFixedFormat(0, '{pdf_abs}'); "
+        f"$wb = Invoke-Retry {{ $excel.Workbooks.Open('{xlsx_abs}') }}; "
+        "try { $wb.RefreshAll() } catch {}; "
+        f"Invoke-Retry {{ $wb.ExportAsFixedFormat(0, '{pdf_abs}') }}; "
         "} finally { "
-        "if ($wb -ne $null) { $wb.Close($false) }; "
-        "if ($excel -ne $null) { $excel.Quit() }; "
+        "if ($wb -ne $null) { try { Invoke-Retry { $wb.Close($false) } } catch {}; try { [void][System.Runtime.InteropServices.Marshal]::ReleaseComObject($wb) } catch {} }; "
+        "if ($excel -ne $null) { try { Invoke-Retry { $excel.Quit() } } catch {}; try { [void][System.Runtime.InteropServices.Marshal]::ReleaseComObject($excel) } catch {} }; "
+        "[GC]::Collect(); [GC]::WaitForPendingFinalizers(); "
+        "if ($excelPid -ne $null) { Start-Sleep -Milliseconds 200; Stop-Process -Id $excelPid -Force -ErrorAction SilentlyContinue }; "
         "}"
     )
+    encoded_cmd = base64.b64encode(ps_script.encode("utf-16-le")).decode("ascii")
 
     proc = subprocess.run(
-        ["powershell", "-NoProfile", "-NonInteractive", "-Command", ps_script],
+        ["powershell", "-NoProfile", "-NonInteractive", "-EncodedCommand", encoded_cmd],
         capture_output=True,
         text=True,
         timeout=timeout_sec,
@@ -192,22 +208,8 @@ def render_xlsx_fallback_html(xlsx_path: Path) -> str:
                     attrs += f' rowspan="{rs}"'
                 if cs > 1:
                     attrs += f' colspan="{cs}"'
-
-                styles: list[str] = []
-                al = cell.alignment
-                if al and al.text_rotation == 255:
-                    styles.append(
-                        "writing-mode:vertical-rl;text-orientation:upright;"
-                        "width:28px;min-width:28px;max-width:34px;"
-                        "white-space:nowrap;vertical-align:top;padding:6px 3px;"
-                    )
-                elif al and al.horizontal in ("left", "right", "center"):
-                    styles.append(f"text-align:{al.horizontal};")
-                if cell.font and cell.font.bold:
-                    styles.append("font-weight:700;")
-                if styles:
-                    attrs += f' style="{"".join(styles)}"'
-
+                if cell.alignment and cell.alignment.textRotation == 255:
+                    attrs += ' style="writing-mode:vertical-rl; letter-spacing:2px; width:2.2em; white-space:nowrap; vertical-align:top;"'
                 cells_html.append(f"<td{attrs}>{text}</td>")
             rows_html.append("<tr>" + "".join(cells_html) + "</tr>")
 

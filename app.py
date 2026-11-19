@@ -44,7 +44,7 @@ from history_store import (
     summarize_history,
 )
 from invoice_parser import ParsedInvoice, parse_einvoice_csv, parse_invoice_text
-from ocr_cpsat_parser import extract_candidates_from_text, reconcile_items_with_cpsat
+from ocr_cpsat_parser import parse_raw_ocr_with_cpsat
 from ocr_scanner import scan_document
 from print_preview import (
     export_xlsx_to_pdf,
@@ -344,10 +344,6 @@ def _serialize_requests(reqs: list[PurchaseRequest]) -> list[dict[str, Any]]:
             "request_id": r.request_id,
             "source_type": r.source_type,
             "budget_code": r.budget_code,
-            "plan_name": r.plan_name,
-            "level1": r.level1,
-            "level2": r.level2,
-            "level3": r.level3,
             "department": r.department,
             "request_date": r.request_date,
             "payer_name": r.payer_name,
@@ -510,175 +506,75 @@ def api_scan_image():
         return jsonify({"ok": False, "error": f"影像掃描失敗：{exc}"}), 400
 
 
+def _serialize_parsed_invoice(inv: ParsedInvoice) -> dict[str, Any]:
+    return {
+        "invoice_no": inv.invoice_no,
+        "roc_date": inv.roc_date,
+        "seller_name": inv.seller_name,
+        "total_amount": inv.total_amount,
+        "items": [
+            {
+                "name": it.name,
+                "spec": it.spec,
+                "unit": it.unit,
+                "quantity": it.quantity,
+                "unit_price": it.unit_price,
+                "subtotal": it.subtotal,
+                "note": it.note,
+            }
+            for it in inv.items
+        ],
+    }
+
+
 @app.post("/api/parse-invoice-text")
 def api_parse_invoice_text():
     try:
         data = request.get_json(force=True)
         inv = parse_invoice_text(data.get("text", ""))
+        return jsonify({"ok": True, "invoice": _serialize_parsed_invoice(inv)})
+    except Exception as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 400
+
+
+@app.post("/api/parse-raw-ocr-cpsat")
+def api_parse_raw_ocr_cpsat():
+    try:
+        data = request.get_json(force=True)
+        raw_text = str(data.get("raw_text", "")).strip()
+        if not raw_text:
+            raise ValueError("請提供原始 OCR / PDF 文字")
+        total_raw = data.get("total_amount")
+        detected_total = parse_number(str(total_raw)) if total_raw not in (None, "") else None
+
+        inv, verified = parse_raw_ocr_with_cpsat(raw_text, detected_total=detected_total)
+        cfg = load_config(CONFIG_PATH)
+        threshold = int(cfg.get("under_3000_threshold", 3000))
+        rec_sheet = (
+            cfg.get("under_3000_sheet", "請購單簡化流程-3000元以下適用")
+            if inv.total_amount is not None and inv.total_amount < threshold
+            else cfg.get("default_sheet", "請購單-3000元以上一定要用此表")
+        )
         return jsonify({
             "ok": True,
-            "invoice": {
-                "invoice_no": inv.invoice_no,
-                "roc_date": inv.roc_date,
-                "seller_name": inv.seller_name,
-                "total_amount": inv.total_amount,
-                "items": [
-                    {
-                        "name": it.name,
-                        "spec": it.spec,
-                        "unit": it.unit,
-                        "quantity": it.quantity,
-                        "unit_price": it.unit_price,
-                        "subtotal": it.subtotal,
-                        "note": it.note,
-                    }
-                    for it in inv.items
-                ],
-            },
+            "engine": "cpsat-raw-parser",
+            "cpsat_verified": verified,
+            "recommended_sheet": rec_sheet,
+            "raw_text": raw_text,
+            "invoice": _serialize_parsed_invoice(inv),
         })
     except Exception as exc:
         return jsonify({"ok": False, "error": str(exc)}), 400
 
 
-def _requests_from_edited(raw_reqs: list[dict[str, Any]], payload: dict[str, Any]) -> list[PurchaseRequest]:
-    """Build PurchaseRequest objects directly from user-edited split preview cards."""
-    plan_fallback = str(payload.get("plan_name", "")).strip()
-    lv1_fallback = str(payload.get("level1", "")).strip()
-    lv2_fallback = str(payload.get("level2", "")).strip()
-    lv3_fallback = str(payload.get("level3", "")).strip()
-
-    built: list[PurchaseRequest] = []
-    for idx, r in enumerate(raw_reqs, start=1):
-        items: list[LineItem] = []
-        for row in r.get("items", []):
-            name = str(row.get("name", "")).strip()
-            if not name:
-                continue
-            qty = parse_number(str(row.get("quantity", ""))) if row.get("quantity") not in (None, "") else None
-            price = parse_number(str(row.get("unit_price", ""))) if row.get("unit_price") not in (None, "") else None
-            sub = parse_number(str(row.get("subtotal", ""))) if row.get("subtotal") not in (None, "") else None
-            items.append(
-                LineItem(
-                    name=name,
-                    spec=str(row.get("spec", "")).strip(),
-                    unit=str(row.get("unit", "")).strip(),
-                    quantity=qty,
-                    unit_price=price,
-                    manual_subtotal=sub if price is None else None,
-                    note=str(row.get("note", "")).strip(),
-                )
-            )
-        if not items:
-            continue
-        rc_raw = parse_number(str(r.get("receipt_count", ""))) if r.get("receipt_count") not in (None, "") else None
-        built.append(
-            PurchaseRequest(
-                request_id=str(r.get("request_id") or f"REQ-{idx:03d}").strip(),
-                source_type=str(r.get("source_type") or "明細"),
-                budget_code=normalize_budget_code(str(r.get("budget_code", ""))),
-                plan_name=str(r.get("plan_name") or plan_fallback).strip(),
-                level1=str(r.get("level1") or lv1_fallback).strip(),
-                level2=str(r.get("level2") or lv2_fallback).strip(),
-                level3=str(r.get("level3") or lv3_fallback).strip(),
-                department=str(r.get("department", "")).strip(),
-                request_date=str(r.get("request_date", "")).strip(),
-                payer_name=str(r.get("payer_name", "")).strip(),
-                receipt_count=int(rc_raw) if rc_raw is not None else None,
-                purpose=str(r.get("purpose", "")).strip(),
-                items=items,
-            )
-        )
-    if not built:
-        raise ValueError("請至少保留一筆有效的品項明細")
-    return built
-
-
 def _prepare_requests_from_payload(payload: dict[str, Any], cfg: dict[str, Any]) -> list[PurchaseRequest]:
     """Build and split/chunk PurchaseRequest list according to payload options."""
-    edited = payload.get("edited_requests")
-    if isinstance(edited, list) and edited:
-        return _requests_from_edited(edited, payload)
-
     reqs = _requests_from_payload(payload, cfg)
     max_rows = int(cfg["items_table"]["max_rows"])
     if payload.get("auto_split"):
         max_amount = float(payload.get("max_amount") or 3000)
         return split_requests_opt(reqs, max_amount=max_amount, max_rows=max_rows)
     return chunk_requests_by_max_rows(reqs, max_rows=max_rows)
-
-
-@app.post("/api/solve-ocr-text")
-def api_solve_ocr_text():
-    """Re-parse edited raw OCR/PDF text with OR-Tools CP-SAT reconciliation and form splitting."""
-    try:
-        payload = request.get_json(force=True)
-        raw_text = str(payload.get("raw_text", "")).strip()
-        if not raw_text:
-            raise ValueError("請提供原始 OCR / PDF 文字內容")
-
-        cfg = load_config(CONFIG_PATH)
-        max_rows = int(cfg["items_table"]["max_rows"])
-        auto_split = bool(payload.get("auto_split", True))
-        max_amount = float(payload.get("max_amount") or 3000)
-
-        parsed = parse_invoice_text(raw_text)
-        candidates = extract_candidates_from_text(raw_text, parsed)
-        selected_items, verified = reconcile_items_with_cpsat(candidates, parsed.total_amount)
-        if selected_items:
-            parsed.items = selected_items
-        if parsed.total_amount is None and parsed.items:
-            tot = sum(it.subtotal for it in parsed.items)
-            parsed.total_amount = int(tot) if float(tot).is_integer() else tot
-
-        reqs = invoices_to_requests(
-            [parsed],
-            budget_code=str(payload.get("budget_code", "")),
-            department=str(payload.get("department", "")),
-            payer_name=str(payload.get("payer_name", "")),
-            purpose=str(payload.get("purpose", "")),
-            max_rows=max_rows,
-            summarize_over_max=not auto_split,
-        )
-        for r in reqs:
-            if payload.get("plan_name"):
-                r.plan_name = str(payload["plan_name"]).strip()
-            if payload.get("level1"):
-                r.level1 = str(payload["level1"]).strip()
-            if payload.get("level2"):
-                r.level2 = str(payload["level2"]).strip()
-            if payload.get("level3"):
-                r.level3 = str(payload["level3"]).strip()
-
-        if auto_split:
-            reqs = split_requests_opt(reqs, max_amount=max_amount, max_rows=max_rows)
-        else:
-            reqs = chunk_requests_by_max_rows(reqs, max_rows=max_rows)
-
-        return jsonify({
-            "ok": True,
-            "cpsat_verified": verified,
-            "invoice": {
-                "invoice_no": parsed.invoice_no,
-                "roc_date": parsed.roc_date,
-                "seller_name": parsed.seller_name,
-                "total_amount": parsed.total_amount,
-                "items": [
-                    {
-                        "name": it.name,
-                        "spec": it.spec,
-                        "unit": it.unit,
-                        "quantity": it.quantity,
-                        "unit_price": it.unit_price,
-                        "subtotal": it.subtotal,
-                        "note": it.note,
-                    }
-                    for it in parsed.items
-                ],
-            },
-            "requests": _serialize_requests(reqs),
-        })
-    except Exception as exc:
-        return jsonify({"ok": False, "error": str(exc)}), 400
 
 
 @app.post("/api/preview")
@@ -711,6 +607,22 @@ def api_generate():
         return jsonify({"ok": False, "error": str(exc)}), 400
 
 
+def _cleanup_old_previews(preview_dir: Path, max_age_sec: int = 3600) -> None:
+    """Best-effort cleanup of old preview artifacts without failing on locked files."""
+    if not preview_dir.exists():
+        return
+    cutoff = time.time() - max_age_sec
+    for entry in preview_dir.iterdir():
+        try:
+            if entry.stat().st_mtime < cutoff:
+                if entry.is_dir():
+                    shutil.rmtree(entry, ignore_errors=True)
+                else:
+                    entry.unlink(missing_ok=True)
+        except OSError:
+            pass
+
+
 @app.get("/api/preview-file/<path:filename>")
 def api_preview_file(filename: str):
     preview_root = (OUTPUT_DIR / "_preview").resolve()
@@ -722,20 +634,6 @@ def api_preview_file(filename: str):
     return send_file(target)
 
 
-def _cleanup_stale_previews(preview_root: Path, max_age_sec: int = 3600) -> None:
-    """Best-effort cleanup of old preview subdirectories; ignores locked files."""
-    if not preview_root.exists():
-        return
-    cutoff = time.time() - max_age_sec
-    for child in preview_root.iterdir():
-        if child.is_dir():
-            try:
-                if child.stat().st_mtime < cutoff:
-                    shutil.rmtree(child, ignore_errors=True)
-            except OSError:
-                pass
-
-
 @app.post("/api/print-preview")
 def api_print_preview():
     try:
@@ -744,22 +642,25 @@ def api_print_preview():
         cfg = load_config(CONFIG_PATH)
         reqs = _prepare_requests_from_payload(payload, cfg)
 
-        preview_root = OUTPUT_DIR / "_preview"
-        _cleanup_stale_previews(preview_root)
-        token = uuid.uuid4().hex[:10]
-        preview_dir = preview_root / token
+        preview_dir = OUTPUT_DIR / "_preview"
         preview_dir.mkdir(parents=True, exist_ok=True)
-        files = generate_from_requests(tpl, reqs, preview_dir, cfg)
+        _cleanup_old_previews(preview_dir)
+
+        run_id = uuid.uuid4().hex[:10]
+        run_dir = preview_dir / run_id
+        run_dir.mkdir(parents=True, exist_ok=True)
+
+        files = generate_from_requests(tpl, reqs, run_dir, cfg)
         first_xlsx = files[0]
-        pdf_path = preview_dir / f"{first_xlsx.stem}.pdf"
+        pdf_path = run_dir / f"{first_xlsx.stem}.pdf"
 
         if export_xlsx_to_pdf(first_xlsx, pdf_path):
-            pngs = render_pdf_to_pngs(pdf_path, preview_dir, prefix=first_xlsx.stem)
+            pngs = render_pdf_to_pngs(pdf_path, run_dir, prefix=first_xlsx.stem)
             return jsonify({
                 "ok": True,
                 "mode": "excel_pdf",
-                "pdf_url": f"/api/preview-file/{token}/{pdf_path.name}",
-                "page_urls": [f"/api/preview-file/{token}/{p.name}" for p in pngs],
+                "pdf_url": f"/api/preview-file/{run_id}/{pdf_path.name}",
+                "page_urls": [f"/api/preview-file/{run_id}/{p.name}" for p in pngs],
                 "total_forms": len(files),
             })
 
