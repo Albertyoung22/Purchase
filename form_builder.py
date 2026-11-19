@@ -240,11 +240,16 @@ def build_purchase_form_xlsx(req: PurchaseRequest, output_path: Path) -> Path:
         ws[coord].alignment = _ALIGN_CENTER
     _apply_border(ws, "A16:J17")
 
-    # 7 Item rows (Rows 18-24) -> Total at Row 25
+    # Dynamic item rows (minimum 7, up to len(req.items) e.g. 12)
     start_row = 18
-    for idx in range(7):
+    num_item_rows = max(7, len(req.items))
+    total_row = start_row + num_item_rows
+
+    ws["H7"] = f"=H{total_row}"
+
+    for idx in range(num_item_rows):
         r = start_row + idx
-        ws.row_dimensions[r].height = 22
+        ws.row_dimensions[r].height = 20 if num_item_rows > 7 else 22
         ws.merge_cells(f"A{r}:B{r}")
         ws.merge_cells(f"C{r}:D{r}")
         ws.merge_cells(f"I{r}:J{r}")
@@ -278,63 +283,70 @@ def build_purchase_form_xlsx(req: PurchaseRequest, output_path: Path) -> Path:
         ws[f"H{r}"].number_format = "#,##0"
         ws[f"I{r}"].alignment = _ALIGN_LEFT
 
-    _apply_border(ws, "A18:J24")
+    _apply_border(ws, f"A{start_row}:J{total_row - 1}")
 
-    # Total row (Row 25)
-    ws.merge_cells("A25:G25")
-    ws["A25"] = "合      計"
-    ws["A25"].font = _FONT_BOLD
-    ws["A25"].alignment = _ALIGN_CENTER
-    ws["H25"] = "=SUM(H18:H24)"
-    ws["H25"].font = _FONT_BOLD
-    ws["H25"].alignment = _ALIGN_RIGHT
-    ws["H25"].number_format = "#,##0"
-    ws.merge_cells("I25:J25")
-    ws.row_dimensions[25].height = 22
-    _apply_border(ws, "A25:J25")
+    # Total row
+    ws.merge_cells(f"A{total_row}:G{total_row}")
+    ws[f"A{total_row}"] = "合      計"
+    ws[f"A{total_row}"].font = _FONT_BOLD
+    ws[f"A{total_row}"].alignment = _ALIGN_CENTER
+    ws[f"H{total_row}"] = f"=SUM(H{start_row}:H{total_row - 1})"
+    ws[f"H{total_row}"].font = _FONT_BOLD
+    ws[f"H{total_row}"].alignment = _ALIGN_RIGHT
+    ws[f"H{total_row}"].number_format = "#,##0"
+    ws.merge_cells(f"I{total_row}:J{total_row}")
+    ws.row_dimensions[total_row].height = 22
+    _apply_border(ws, f"A{total_row}:J{total_row}")
 
-    # Purpose section (Rows 26-27)
-    ws.merge_cells("A26:J26")
-    ws["A26"] = "用     途     說     明"
-    ws["A26"].font = _FONT_BOLD
-    ws["A26"].alignment = _ALIGN_CENTER
-    ws.merge_cells("A27:J27")
-    ws["A27"] = req.purpose
-    ws["A27"].font = _FONT_BODY
-    ws["A27"].alignment = _ALIGN_LEFT
-    ws.row_dimensions[27].height = 26
-    _apply_border(ws, "A26:J27")
+    # Purpose section
+    p_lbl = total_row + 1
+    p_val = total_row + 2
+    ws.merge_cells(f"A{p_lbl}:J{p_lbl}")
+    ws[f"A{p_lbl}"] = "用     途     說     明"
+    ws[f"A{p_lbl}"].font = _FONT_BOLD
+    ws[f"A{p_lbl}"].alignment = _ALIGN_CENTER
+    ws.merge_cells(f"A{p_val}:J{p_val}")
+    ws[f"A{p_val}"] = req.purpose
+    ws[f"A{p_val}"].font = _FONT_BODY
+    ws[f"A{p_val}"].alignment = _ALIGN_LEFT
+    ws.row_dimensions[p_val].height = 26
+    _apply_border(ws, f"A{p_lbl}:J{p_val}")
 
-    # Footer checkboxes & signatures (Rows 28-32)
-    ws.merge_cells("A28:J28")
-    ws["A28"] = "綠色採購指定項目( 1-46項) □是  □否"
-    ws["A28"].font = _FONT_SMALL
-    ws.merge_cells("A29:B29")
-    ws["A29"] = "請  購  單  位"
-    ws.merge_cells("C29:E29")
-    ws["C29"] = "採  購  單  位"
-    ws.merge_cells("F29:G29")
-    ws["F29"] = "會  計  室"
-    ws.merge_cells("H29:J29")
-    ws["H29"] = "基 金 主 持 人"
-    ws["A30"] = "請購人"
-    ws.merge_cells("C30:E30")
-    ws["C30"] = "□共同供應契約 □無共同供應契約 □比共同供應契約價格低"
-    ws["A31"] = "處室主任"
-    ws.merge_cells("C31:E31")
-    ws["C31"] = "庶務組長 / 總務主任"
-    ws.merge_cells("F30:G31")
-    ws.merge_cells("H30:J31")
-    for row_idx in range(28, 32):
+    # Footer checkboxes & signatures
+    f0 = total_row + 3
+    f1 = total_row + 4
+    f2 = total_row + 5
+    f3 = total_row + 6
+    f4 = total_row + 7
+    ws.merge_cells(f"A{f0}:J{f0}")
+    ws[f"A{f0}"] = "綠色採購指定項目( 1-46項) □是  □否"
+    ws[f"A{f0}"].font = _FONT_SMALL
+    ws.merge_cells(f"A{f1}:B{f1}")
+    ws[f"A{f1}"] = "請  購  單  位"
+    ws.merge_cells(f"C{f1}:E{f1}")
+    ws[f"C{f1}"] = "採  購  單  位"
+    ws.merge_cells(f"F{f1}:G{f1}")
+    ws[f"F{f1}"] = "會  計  室"
+    ws.merge_cells(f"H{f1}:J{f1}")
+    ws[f"H{f1}"] = "基 金 主 持 人"
+    ws[f"A{f2}"] = "請購人"
+    ws.merge_cells(f"C{f2}:E{f2}")
+    ws[f"C{f2}"] = "□共同供應契約 □無共同供應契約 □比共同供應契約價格低"
+    ws[f"A{f3}"] = "處室主任"
+    ws.merge_cells(f"C{f3}:E{f3}")
+    ws[f"C{f3}"] = "庶務組長 / 總務主任"
+    ws.merge_cells(f"F{f2}:G{f3}")
+    ws.merge_cells(f"H{f2}:J{f3}")
+    for row_idx in range(f0, f4):
         ws.row_dimensions[row_idx].height = 20
         for col_idx in range(1, 11):
             ws.cell(row_idx, col_idx).font = _FONT_SMALL
             ws.cell(row_idx, col_idx).alignment = _ALIGN_CENTER
-    _apply_border(ws, "A28:J31")
+    _apply_border(ws, f"A{f0}:J{f3}")
 
-    ws.merge_cells("A32:J32")
-    ws["A32"] = "備註：代墊款項 1萬元以上檢附專案簽准簽呈"
-    ws["A32"].font = _FONT_SMALL
+    ws.merge_cells(f"A{f4}:J{f4}")
+    ws[f"A{f4}"] = "備註：代墊款項 1萬元以上檢附專案簽准簽呈"
+    ws[f"A{f4}"].font = _FONT_SMALL
 
     # A4 Portrait print setup
     ws.page_setup.paperSize = ws.PAPERSIZE_A4

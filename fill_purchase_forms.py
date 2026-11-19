@@ -326,11 +326,104 @@ def _configure_single_page_print(ws: Worksheet) -> None:
     ws.page_margins.footer = 0.15
 
 
+def _expand_item_rows(ws: Worksheet, start_row: int, total_row: int, extra_rows: int) -> None:
+    """Safely insert `extra_rows` before `total_row`, shifting merges, styles, heights, and SUM formulas."""
+    from copy import copy
+
+    if extra_rows <= 0:
+        return
+
+    src_item_row = total_row - 1
+    old_max_row = ws.max_row
+
+    # 1. Capture existing row heights for rows at/below total_row before shifting
+    saved_heights: dict[int, float | None] = {
+        r: ws.row_dimensions[r].height for r in range(total_row, old_max_row + 1)
+    }
+    src_item_height = ws.row_dimensions[src_item_row].height
+
+    # 2. Capture all merged ranges and identify item-row merges to clone
+    old_merges = [
+        (m.min_row, m.min_col, m.max_row, m.max_col) for m in list(ws.merged_cells.ranges)
+    ]
+    item_row_merges = [
+        (c1, c2) for (r1, c1, r2, c2) in old_merges if r1 == src_item_row and r2 == src_item_row
+    ]
+
+    # Unmerge ranges that intersect or lie below total_row
+    for r1, c1, r2, c2 in old_merges:
+        if r2 >= total_row:
+            ws.unmerge_cells(start_row=r1, start_column=c1, end_row=r2, end_column=c2)
+
+    # 3. Insert rows right before total_row
+    ws.insert_rows(total_row, amount=extra_rows)
+
+    # 4. Re-apply shifted/extended merged ranges
+    for r1, c1, r2, c2 in old_merges:
+        if r2 < total_row:
+            continue
+        if r1 < total_row <= r2:
+            # Vertical merge spanning across total_row (e.g. J8:J31)
+            ws.merge_cells(start_row=r1, start_column=c1, end_row=r2 + extra_rows, end_column=c2)
+        else:
+            ws.merge_cells(
+                start_row=r1 + extra_rows,
+                start_column=c1,
+                end_row=r2 + extra_rows,
+                end_column=c2,
+            )
+
+    # 5. Restore shifted row heights
+    for old_r, h in saved_heights.items():
+        if h is not None:
+            ws.row_dimensions[old_r + extra_rows].height = h
+
+    # 6. Style newly inserted item rows & clone item-row merges + subtotal formula
+    for r in range(total_row, total_row + extra_rows):
+        if src_item_height is not None:
+            ws.row_dimensions[r].height = src_item_height
+        for col_idx in range(1, 10):  # A..I (J is the vertical merged payer column)
+            src_cell = ws.cell(src_item_row, col_idx)
+            dst_cell = ws.cell(r, col_idx)
+            if src_cell.has_style:
+                dst_cell.font = copy(src_cell.font)
+                dst_cell.border = copy(src_cell.border)
+                dst_cell.fill = copy(src_cell.fill)
+                dst_cell.number_format = src_cell.number_format
+                dst_cell.alignment = copy(src_cell.alignment)
+        for c1, c2 in item_row_merges:
+            ws.merge_cells(start_row=r, start_column=c1, end_row=r, end_column=c2)
+        ws[f"H{r}"] = f"=ROUND(F{r}*G{r},0)"
+
+    # 7. Update shifted 合計 formula and header_amount (=H{total_row}) reference
+    new_total_row = total_row + extra_rows
+    ws[f"H{new_total_row}"].value = f"=SUM(H{start_row}:H{new_total_row - 1})"
+
+    for coord in ("I8", "H7"):
+        val = ws[coord].value
+        if isinstance(val, str) and val.strip().upper() == f"=H{total_row}":
+            ws[coord].value = f"=H{new_total_row}"
+
+
 def fill_worksheet(ws: Worksheet, req: PurchaseRequest, cfg: dict[str, Any]) -> None:
     """Populate a single worksheet with a PurchaseRequest's data."""
     _hide_instruction_row(ws)
     cells = cfg["cells"]
     layout = _detect_sheet_layout(ws, cfg)
+
+    table_cfg = cfg["items_table"]
+    start_row = layout["start_row"]
+    template_rows = layout["max_rows"]
+    max_allowed_rows = int(table_cfg.get("max_rows", 12))
+
+    # Dynamically expand item rows if needed (up to max_allowed_rows, e.g. 12)
+    if len(req.items) > template_rows and len(req.items) <= max_allowed_rows and layout["total_coord"]:
+        m_tot = re.search(r"(\d+)$", layout["total_coord"])
+        if m_tot:
+            old_total_row = int(m_tot.group(1))
+            extra = len(req.items) - template_rows
+            _expand_item_rows(ws, start_row, old_total_row, extra)
+            layout = _detect_sheet_layout(ws, cfg)
 
     if req.budget_code and cells.get("budget_code"):
         code_val: Any = int(req.budget_code) if req.budget_code.isdigit() else req.budget_code
@@ -362,7 +455,6 @@ def fill_worksheet(ws: Worksheet, req: PurchaseRequest, cfg: dict[str, Any]) -> 
     if req.purpose and layout["purpose_coord"]:
         safe_set_cell(ws, layout["purpose_coord"], req.purpose)
 
-    table_cfg = cfg["items_table"]
     start_row = layout["start_row"]
     max_rows = layout["max_rows"]
     cols = table_cfg["columns"]

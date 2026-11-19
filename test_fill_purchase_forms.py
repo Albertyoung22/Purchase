@@ -395,31 +395,57 @@ class TestFillPurchaseForms(unittest.TestCase):
             self.assertEqual(out_ws["H28"].value, "=SUM(H21:H27)")
             self.assertEqual(out_ws["A30"].value, "小北百貨採購")
 
-    def test_over_7_items_auto_chunks_into_multiple_forms(self) -> None:
+    def test_up_to_12_items_expands_single_form_and_over_12_chunks(self) -> None:
         base_dir = Path(__file__).parent
         cfg = load_config(base_dir / "config.json")
-        req = PurchaseRequest(
-            request_id="MANY-10",
+
+        # 12 items on real template.xlsx -> expands to 1 single sheet!
+        req_12 = PurchaseRequest(
+            request_id="TWELVE",
+            budget_code="321",
+            department="總務處",
+            purpose="12項單頁採購",
+            items=[
+                LineItem(name=f"品項{i}", unit="個", quantity=1, unit_price=300)
+                for i in range(1, 13)
+            ],
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            out_dir = Path(tmp) / "output"
+            tpl_real = base_dir / "template.xlsx"
+            files_12 = generate_from_requests(tpl_real, [req_12], out_dir, cfg)
+            self.assertEqual(len(files_12), 1)
+            wb = openpyxl.load_workbook(files_12[0], data_only=False)
+            ws = wb.active
+            self.assertEqual(ws["A21"].value, "品項1")
+            self.assertEqual(ws["A32"].value, "品項12")
+            self.assertEqual(ws["H33"].value, "=SUM(H21:H32)")
+            self.assertEqual(ws["I8"].value, "=H33")
+            self.assertEqual(ws["A35"].value, "12項單頁採購")
+
+        # 14 items (>12) -> auto-chunks into 2 sheets (12 + 2)
+        req_14 = PurchaseRequest(
+            request_id="MANY-14",
             budget_code="321",
             department="總務處",
             purpose="多品項採購",
             items=[
                 LineItem(name=f"文具品項{i}", unit="個", quantity=1, unit_price=100)
-                for i in range(1, 11)
+                for i in range(1, 15)
             ],
         )
         with tempfile.TemporaryDirectory() as tmp:
             out_dir = Path(tmp) / "output"
-            files = generate_from_requests(None, [req], out_dir, cfg)
+            files = generate_from_requests(None, [req_14], out_dir, cfg)
             self.assertEqual(len(files), 2)
-            self.assertEqual(files[0].name, "MANY-10-1_採購申請單.xlsx")
-            self.assertEqual(files[1].name, "MANY-10-2_採購申請單.xlsx")
+            self.assertEqual(files[0].name, "MANY-14-1_採購申請單.xlsx")
+            self.assertEqual(files[1].name, "MANY-14-2_採購申請單.xlsx")
             wb1 = openpyxl.load_workbook(files[0])
             wb2 = openpyxl.load_workbook(files[1])
             self.assertEqual(wb1.active["A18"].value, "文具品項1")
-            self.assertEqual(wb1.active["A24"].value, "文具品項7")
-            self.assertEqual(wb2.active["A18"].value, "文具品項8")
-            self.assertEqual(wb2.active["A20"].value, "文具品項10")
+            self.assertEqual(wb1.active["A29"].value, "文具品項12")
+            self.assertEqual(wb2.active["A18"].value, "文具品項13")
+            self.assertEqual(wb2.active["A19"].value, "文具品項14")
 
 
 if __name__ == "__main__":
