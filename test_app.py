@@ -427,6 +427,40 @@ class TestDesktopApp(unittest.TestCase):
         total_items = sum(len(r["items"]) for r in data["requests"])
         self.assertEqual(total_items, 14)
 
+    def test_generate_uses_edited_requests_when_provided(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            out_dir = Path(tmp) / "output"
+            with (
+                patch.object(web_app, "_active_template_path", return_value=None),
+                patch.object(web_app, "OUTPUT_DIR", out_dir),
+                patch.object(web_app, "HISTORY_PATH", Path(tmp) / "history.json"),
+            ):
+                res = self.client.post(
+                    "/api/generate",
+                    json={
+                        "mode": "manual",
+                        "edited_requests": [
+                            {
+                                "request_id": "EDIT-001",
+                                "source_type": "發票",
+                                "budget_code": "321",
+                                "department": "教務處",
+                                "purpose": "已修改用途",
+                                "items": [
+                                    {"name": "修改後品名", "spec": "A4", "unit": "包", "quantity": 3, "unit_price": 120, "subtotal": 360, "note": "急用"}
+                                ],
+                            }
+                        ],
+                    },
+                )
+                data = res.get_json()
+                self.assertTrue(data["ok"])
+                self.assertEqual(data["files"], ["EDIT-001_採購申請單.xlsx"])
+                self.assertEqual(data["requests"][0]["total_amount"], 360)
+                wb = openpyxl.load_workbook(out_dir / "EDIT-001_採購申請單.xlsx")
+                self.assertEqual(wb.active["A18"].value, "修改後品名")
+                self.assertEqual(wb.active["C18"].value, "A4")
+
 
 if __name__ == "__main__":
     unittest.main()

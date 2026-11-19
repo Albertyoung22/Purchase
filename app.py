@@ -342,6 +342,10 @@ def _serialize_requests(reqs: list[PurchaseRequest]) -> list[dict[str, Any]]:
             "request_id": r.request_id,
             "source_type": r.source_type,
             "budget_code": r.budget_code,
+            "plan_name": r.plan_name,
+            "level1": r.level1,
+            "level2": r.level2,
+            "level3": r.level3,
             "department": r.department,
             "request_date": r.request_date,
             "payer_name": r.payer_name,
@@ -534,8 +538,65 @@ def api_parse_invoice_text():
         return jsonify({"ok": False, "error": str(exc)}), 400
 
 
+def _requests_from_edited(raw_reqs: list[dict[str, Any]], payload: dict[str, Any]) -> list[PurchaseRequest]:
+    """Build PurchaseRequest objects directly from user-edited split preview cards."""
+    plan_fallback = str(payload.get("plan_name", "")).strip()
+    lv1_fallback = str(payload.get("level1", "")).strip()
+    lv2_fallback = str(payload.get("level2", "")).strip()
+    lv3_fallback = str(payload.get("level3", "")).strip()
+
+    built: list[PurchaseRequest] = []
+    for idx, r in enumerate(raw_reqs, start=1):
+        items: list[LineItem] = []
+        for row in r.get("items", []):
+            name = str(row.get("name", "")).strip()
+            if not name:
+                continue
+            qty = parse_number(str(row.get("quantity", ""))) if row.get("quantity") not in (None, "") else None
+            price = parse_number(str(row.get("unit_price", ""))) if row.get("unit_price") not in (None, "") else None
+            sub = parse_number(str(row.get("subtotal", ""))) if row.get("subtotal") not in (None, "") else None
+            items.append(
+                LineItem(
+                    name=name,
+                    spec=str(row.get("spec", "")).strip(),
+                    unit=str(row.get("unit", "")).strip(),
+                    quantity=qty,
+                    unit_price=price,
+                    manual_subtotal=sub if price is None else None,
+                    note=str(row.get("note", "")).strip(),
+                )
+            )
+        if not items:
+            continue
+        rc_raw = parse_number(str(r.get("receipt_count", ""))) if r.get("receipt_count") not in (None, "") else None
+        built.append(
+            PurchaseRequest(
+                request_id=str(r.get("request_id") or f"REQ-{idx:03d}").strip(),
+                source_type=str(r.get("source_type") or "明細"),
+                budget_code=normalize_budget_code(str(r.get("budget_code", ""))),
+                plan_name=str(r.get("plan_name") or plan_fallback).strip(),
+                level1=str(r.get("level1") or lv1_fallback).strip(),
+                level2=str(r.get("level2") or lv2_fallback).strip(),
+                level3=str(r.get("level3") or lv3_fallback).strip(),
+                department=str(r.get("department", "")).strip(),
+                request_date=str(r.get("request_date", "")).strip(),
+                payer_name=str(r.get("payer_name", "")).strip(),
+                receipt_count=int(rc_raw) if rc_raw is not None else None,
+                purpose=str(r.get("purpose", "")).strip(),
+                items=items,
+            )
+        )
+    if not built:
+        raise ValueError("請至少保留一筆有效的品項明細")
+    return built
+
+
 def _prepare_requests_from_payload(payload: dict[str, Any], cfg: dict[str, Any]) -> list[PurchaseRequest]:
     """Build and split/chunk PurchaseRequest list according to payload options."""
+    edited = payload.get("edited_requests")
+    if isinstance(edited, list) and edited:
+        return _requests_from_edited(edited, payload)
+
     reqs = _requests_from_payload(payload, cfg)
     max_rows = int(cfg["items_table"]["max_rows"])
     if payload.get("auto_split"):

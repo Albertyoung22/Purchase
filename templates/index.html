@@ -426,6 +426,15 @@
     let currentMode = "scan";
     let budgetMap = {};
     let budgetEntries = [];
+    window._editedRequests = null;
+
+    function escAttr(val) {
+      return String(val ?? "")
+        .replace(/&/g, "&amp;")
+        .replace(/"/g, "&quot;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;");
+    }
 
     function populateSelect(selectId, values) {
       const sel = document.getElementById(selectId);
@@ -555,25 +564,93 @@
         addManualRow(data.document_type + "採購", "1", "", inv.total_amount ?? "", "", "批", "");
       }
 
+      window._editedRequests = null;
       const box = document.getElementById("scanResultBox");
       box.style.display = "block";
       const missingTotal = (inv.total_amount == null || inv.total_amount === 0) && (!inv.items || inv.items.length === 0);
+      const scanRows = (inv.items && inv.items.length > 0)
+        ? inv.items
+        : [{ name: data.document_type + "採購", spec: "", unit: "批", quantity: 1, unit_price: "", subtotal: inv.total_amount ?? "", note: "" }];
+
       box.innerHTML = `
         <div style="padding:10px; border:1px solid ${missingTotal ? '#fca5a5' : '#a7f3d0'}; background:${missingTotal ? '#fef2f2' : '#ecfdf5'}; border-radius:6px;">
-          <strong>辨識引擎：</strong>${data.engine} ｜
-          ${data.cpsat_verified ? '<span class="badge ok">CP-SAT 金額核對相符</span> ｜ ' : ''}
-          <strong>單據類型：</strong><span class="badge">${data.document_type}</span> ｜
-          <strong>總金額：</strong>${inv.total_amount ?? '(未辨識)'} 元 ｜
-          <strong>自動選用工作表：</strong><span class="badge ok">${data.recommended_sheet}</span>
-          ${inv.items && inv.items.length ? `
-          <table style="margin-top:8px;">
-            <thead><tr><th>品名（項目）</th><th>規格</th><th>單位</th><th>數量</th><th>單價</th><th>小計</th><th>備註</th></tr></thead>
-            <tbody>${inv.items.map(i => `<tr><td>${i.name}</td><td>${i.spec || ''}</td><td>${i.unit || ''}</td><td>${i.quantity}</td><td>${i.unit_price ?? ''}</td><td>${i.subtotal}</td><td>${i.note || ''}</td></tr>`).join('')}</tbody>
-          </table>` : `<div style="margin-top:6px; color:#991b1b; font-weight:600;">未能自動解析出明細金額，請切換到「手動輸入 / 掃描結果編輯」補填金額，或貼上「原始文字」後再試。</div>`}
-          <details style="margin-top:6px;"><summary>檢視原始 OCR / PDF 文字</summary><pre>${data.raw_text}</pre></details>
+          <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px;">
+            <div>
+              <strong>辨識引擎：</strong>${escAttr(data.engine)} ｜
+              ${data.cpsat_verified ? '<span class="badge ok">CP-SAT 金額核對相符</span> ｜ ' : ''}
+              <strong>單據類型：</strong><span class="badge">${escAttr(data.document_type)}</span> ｜
+              <strong>總金額：</strong><span id="scanTotalBadge">${inv.total_amount ?? '(未辨識)'}</span> 元 ｜
+              <strong>自動選用工作表：</strong><span class="badge ok">${escAttr(data.recommended_sheet)}</span>
+            </div>
+            <button type="button" class="secondary" onclick="addScanResultRow()">+ 新增一列</button>
+          </div>
+          ${(!inv.items || !inv.items.length) ? `<div style="margin-top:6px; color:#991b1b; font-weight:600;">未能自動解析出明細金額，請直接於下方表格修改或補填金額，再進行預覽或產出。</div>` : ''}
+          <table id="scanEditableTable" style="margin-top:8px; background:#fff;">
+            <thead><tr><th>品名（項目）</th><th style="width:110px;">規格</th><th style="width:65px;">單位</th><th style="width:70px;">數量</th><th style="width:85px;">單價</th><th style="width:85px;">小計</th><th style="width:100px;">備註</th><th style="width:60px;">操作</th></tr></thead>
+            <tbody></tbody>
+          </table>
+          <details style="margin-top:6px;"><summary>檢視原始 OCR / PDF 文字</summary><pre>${escAttr(data.raw_text)}</pre></details>
         </div>
       `;
-      showStatus(`掃描完成！總金額 ${inv.total_amount ?? 0} 元 → 自動選用「${data.recommended_sheet}」`);
+      scanRows.forEach(it => addScanResultRow(it.name, it.quantity ?? 1, it.unit_price ?? "", it.unit_price == null ? (it.subtotal ?? "") : (it.subtotal ?? ""), it.spec || "", it.unit || "", it.note || "", false));
+      syncScanTableToManual();
+      showStatus(`掃描完成！總金額 ${inv.total_amount ?? 0} 元 → 自動選用「${data.recommended_sheet}」（可直接於下方表格修改）`);
+    }
+
+    function addScanResultRow(name = "", qty = "1", price = "", sub = "", spec = "", unit = "個", note = "", doSync = true) {
+      const tbody = document.querySelector("#scanEditableTable tbody");
+      if (!tbody) return;
+      const tr = document.createElement("tr");
+      tr.innerHTML = `
+        <td><input type="text" class="s-name" value="${escAttr(name)}" oninput="syncScanTableToManual()" /></td>
+        <td><input type="text" class="s-spec" value="${escAttr(spec)}" oninput="syncScanTableToManual()" /></td>
+        <td><input type="text" class="s-unit" value="${escAttr(unit || '個')}" oninput="syncScanTableToManual()" /></td>
+        <td><input type="number" class="s-qty" value="${escAttr(qty)}" oninput="onScanQtyPriceChange(this)" /></td>
+        <td><input type="number" class="s-price" value="${escAttr(price)}" placeholder="選填" oninput="onScanQtyPriceChange(this)" /></td>
+        <td><input type="number" class="s-sub" value="${escAttr(sub)}" placeholder="小計" oninput="syncScanTableToManual()" /></td>
+        <td><input type="text" class="s-note" value="${escAttr(note)}" oninput="syncScanTableToManual()" /></td>
+        <td><button type="button" class="secondary" onclick="this.closest('tr').remove(); syncScanTableToManual();">刪除</button></td>
+      `;
+      tbody.appendChild(tr);
+      if (doSync) syncScanTableToManual();
+    }
+
+    function onScanQtyPriceChange(inputEl) {
+      const tr = inputEl.closest("tr");
+      const qty = parseFloat(tr.querySelector(".s-qty").value);
+      const priceStr = tr.querySelector(".s-price").value.trim();
+      if (priceStr !== "" && !isNaN(qty) && !isNaN(parseFloat(priceStr))) {
+        tr.querySelector(".s-sub").value = Math.round(qty * parseFloat(priceStr) * 100) / 100;
+      }
+      syncScanTableToManual();
+    }
+
+    function syncScanTableToManual() {
+      const scanRows = [...document.querySelectorAll("#scanEditableTable tbody tr")];
+      const tbody = document.querySelector("#manualTable tbody");
+      tbody.innerHTML = "";
+      let total = 0;
+      scanRows.forEach(tr => {
+        const name = tr.querySelector(".s-name").value;
+        const spec = tr.querySelector(".s-spec").value;
+        const unit = tr.querySelector(".s-unit").value;
+        const qty = tr.querySelector(".s-qty").value;
+        const price = tr.querySelector(".s-price").value;
+        const sub = tr.querySelector(".s-sub").value;
+        const note = tr.querySelector(".s-note").value;
+        const subNum = parseFloat(sub);
+        const qtyNum = parseFloat(qty);
+        const priceNum = parseFloat(price);
+        if (!isNaN(qtyNum) && !isNaN(priceNum) && price.trim() !== "") {
+          total += qtyNum * priceNum;
+        } else if (!isNaN(subNum)) {
+          total += subNum;
+        }
+        addManualRow(name, qty, price, price.trim() === "" ? sub : "", spec, unit, note);
+      });
+      const badge = document.getElementById("scanTotalBadge");
+      if (badge) badge.textContent = Math.round(total * 100) / 100;
+      window._editedRequests = null;
     }
 
     function showStatus(msg, isOk = true) {
@@ -692,7 +769,7 @@
       `;
     }
 
-    function buildPayload() {
+    function buildPayload(includeEdited = false) {
       const items = [...document.querySelectorAll("#manualTable tbody tr")].map(tr => ({
         name: tr.querySelector(".m-name").value,
         spec: tr.querySelector(".m-spec").value,
@@ -702,7 +779,7 @@
         subtotal: tr.querySelector(".m-sub").value,
         note: tr.querySelector(".m-note").value,
       }));
-      return {
+      const payload = {
         mode: currentMode === "scan" ? "manual" : currentMode,
         budget_code: document.getElementById("budgetCode").value,
         plan_name: document.getElementById("planName").value,
@@ -722,24 +799,146 @@
         auto_split: document.getElementById("autoSplit").checked,
         max_amount: document.getElementById("maxAmount").value,
       };
+      if (includeEdited && Array.isArray(window._editedRequests) && window._editedRequests.length > 0) {
+        payload.edited_requests = window._editedRequests;
+      }
+      return payload;
+    }
+
+    function _recalcRequestTotal(req) {
+      let tot = 0;
+      (req.items || []).forEach(it => {
+        const q = parseFloat(it.quantity);
+        const p = parseFloat(it.unit_price);
+        const s = parseFloat(it.subtotal);
+        if (!isNaN(q) && !isNaN(p) && it.unit_price !== "" && it.unit_price !== null) {
+          it.subtotal = Math.round(q * p * 100) / 100;
+          tot += it.subtotal;
+        } else if (!isNaN(s)) {
+          tot += s;
+        }
+      });
+      req.total_amount = Math.round(tot * 100) / 100;
+    }
+
+    function updateEditedField(reqIdx, field, value) {
+      if (!window._editedRequests || !window._editedRequests[reqIdx]) return;
+      window._editedRequests[reqIdx][field] = value;
+    }
+
+    function updateEditedItem(reqIdx, itemIdx, field, value) {
+      const req = window._editedRequests?.[reqIdx];
+      if (!req || !req.items[itemIdx]) return;
+      const it = req.items[itemIdx];
+      it[field] = value === "" && (field === "unit_price" || field === "quantity" || field === "subtotal") ? null : value;
+      if (field === "unit_price" && it.unit_price !== null) {
+        const q = parseFloat(it.quantity);
+        const p = parseFloat(it.unit_price);
+        if (!isNaN(q) && !isNaN(p)) {
+          it.subtotal = Math.round(q * p * 100) / 100;
+          const subInput = document.getElementById(`p-sub-${reqIdx}-${itemIdx}`);
+          if (subInput) subInput.value = it.subtotal;
+        }
+      } else if (field === "quantity") {
+        const q = parseFloat(it.quantity);
+        const p = parseFloat(it.unit_price);
+        if (!isNaN(q) && !isNaN(p) && it.unit_price !== null) {
+          it.subtotal = Math.round(q * p * 100) / 100;
+          const subInput = document.getElementById(`p-sub-${reqIdx}-${itemIdx}`);
+          if (subInput) subInput.value = it.subtotal;
+        }
+      } else if (field === "subtotal") {
+        // Switching to manual subtotal if user directly edits subtotal
+        if (it.unit_price === null || it.unit_price === "") {
+          it.unit_price = null;
+        }
+      }
+      _recalcRequestTotal(req);
+      const totBadge = document.getElementById(`p-total-${reqIdx}`);
+      if (totBadge) totBadge.textContent = req.total_amount;
+    }
+
+    function addEditedItem(reqIdx) {
+      const req = window._editedRequests?.[reqIdx];
+      if (!req) return;
+      req.items.push({ name: "", spec: "", unit: "個", quantity: 1, unit_price: 0, subtotal: 0, note: "" });
+      _recalcRequestTotal(req);
+      renderPreview(window._editedRequests);
+    }
+
+    function removeEditedItem(reqIdx, itemIdx) {
+      const req = window._editedRequests?.[reqIdx];
+      if (!req) return;
+      req.items.splice(itemIdx, 1);
+      _recalcRequestTotal(req);
+      renderPreview(window._editedRequests);
+    }
+
+    function moveEditedItem(fromIdx, itemIdx, toIdxStr) {
+      const toIdx = parseInt(toIdxStr, 10);
+      if (isNaN(toIdx) || toIdx === fromIdx || !window._editedRequests?.[toIdx]) return;
+      const [moved] = window._editedRequests[fromIdx].items.splice(itemIdx, 1);
+      window._editedRequests[toIdx].items.push(moved);
+      _recalcRequestTotal(window._editedRequests[fromIdx]);
+      _recalcRequestTotal(window._editedRequests[toIdx]);
+      renderPreview(window._editedRequests);
     }
 
     function renderPreview(reqs) {
+      window._editedRequests = JSON.parse(JSON.stringify(reqs));
       const area = document.getElementById("previewArea");
-      area.innerHTML = reqs.map((r, idx) => {
+      if (!reqs || reqs.length === 0) {
+        area.innerHTML = "";
+        return;
+      }
+      area.innerHTML = `
+        <div style="margin-bottom:8px; padding:8px 12px; background:#f0f9ff; border:1px solid #bae6fd; border-radius:6px; font-size:13px; color:#0369a1; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px;">
+          <span>✎ 以下分單結果皆可直接修改（含單號、科目、用途與品項金額），修改後直接點「真實列印預覽」或「產出 Excel 請購單」即會套用。</span>
+          <button type="button" class="secondary" onclick="previewForms()">重新依原始明細分單</button>
+        </div>
+      ` + window._editedRequests.map((r, idx) => {
         const needsApproval = r.payer_name && Number(r.total_amount || 0) >= 10000;
         const warnHtml = needsApproval
           ? `<div style="margin-top:6px; padding:6px 10px; background:#fef3c7; border:1px solid #fcd34d; color:#92400e; border-radius:4px; font-size:12px; font-weight:600;">⚠ 代墊款項達 10,000 元以上，請依規定檢附專案簽准簽呈！</div>`
           : "";
+        const moveHeader = window._editedRequests.length > 1 ? '<th style="width:90px;">移至單據</th>' : '';
         return `
-        <div style="margin-bottom:10px; padding:10px; border:1px solid var(--border); border-radius:6px;">
-          <strong>單據 #${idx + 1} (${r.request_id})</strong>
-          <span class="badge">${r.source_type}</span>
-          ｜ 科目：${r.budget_code || "-"} ｜ 單位：${r.department || "-"} ｜ 合計：<strong>${r.total_amount} 元</strong> (${r.items.length} 項)
+        <div style="margin-bottom:12px; padding:12px; border:1px solid var(--border); border-radius:8px; background:#fff;">
+          <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px; margin-bottom:8px;">
+            <div>
+              <strong>單據 #${idx + 1}</strong>
+              <span class="badge">${escAttr(r.source_type)}</span>
+              ｜ 合計：<strong id="p-total-${idx}" style="color:var(--primary);">${r.total_amount}</strong> 元 (${r.items.length} 項)
+            </div>
+            <button type="button" class="secondary" onclick="addEditedItem(${idx})">+ 新增品項</button>
+          </div>
+          <div class="row" style="margin-bottom:8px;">
+            <div class="col" style="min-width:130px;"><label>單號</label><input type="text" value="${escAttr(r.request_id)}" oninput="updateEditedField(${idx}, 'request_id', this.value)" /></div>
+            <div class="col" style="min-width:100px;"><label>預算科目</label><input type="text" value="${escAttr(r.budget_code)}" oninput="updateEditedField(${idx}, 'budget_code', this.value)" /></div>
+            <div class="col" style="min-width:110px;"><label>請購單位</label><input type="text" value="${escAttr(r.department)}" oninput="updateEditedField(${idx}, 'department', this.value)" /></div>
+            <div class="col" style="min-width:140px;"><label>請購日期</label><input type="text" value="${escAttr(r.request_date)}" oninput="updateEditedField(${idx}, 'request_date', this.value)" /></div>
+            <div class="col" style="min-width:110px;"><label>代墊人</label><input type="text" value="${escAttr(r.payer_name)}" oninput="updateEditedField(${idx}, 'payer_name', this.value)" /></div>
+            <div class="col" style="min-width:180px;"><label>用途說明</label><input type="text" value="${escAttr(r.purpose)}" oninput="updateEditedField(${idx}, 'purpose', this.value)" /></div>
+          </div>
           ${warnHtml}
           <table>
-            <thead><tr><th>品名（項目）</th><th>規格</th><th>單位</th><th>數量</th><th>單價</th><th>小計</th><th>備註</th></tr></thead>
-            <tbody>${r.items.map(i => `<tr><td>${i.name}</td><td>${i.spec || ""}</td><td>${i.unit || ""}</td><td>${i.quantity ?? ""}</td><td>${i.unit_price ?? ""}</td><td>${i.subtotal ?? ""}</td><td>${i.note || ""}</td></tr>`).join("")}</tbody>
+            <thead><tr><th>品名（項目）</th><th style="width:100px;">規格</th><th style="width:60px;">單位</th><th style="width:65px;">數量</th><th style="width:80px;">單價</th><th style="width:80px;">小計</th><th style="width:90px;">備註</th>${moveHeader}<th style="width:58px;">操作</th></tr></thead>
+            <tbody>${r.items.map((i, itemIdx) => {
+              const moveCell = window._editedRequests.length > 1
+                ? `<td><select onchange="moveEditedItem(${idx}, ${itemIdx}, this.value)"><option value="">--</option>${window._editedRequests.map((_, tIdx) => tIdx !== idx ? `<option value="${tIdx}">單據 #${tIdx + 1}</option>` : '').join('')}</select></td>`
+                : '';
+              return `<tr>
+                <td><input type="text" value="${escAttr(i.name)}" oninput="updateEditedItem(${idx}, ${itemIdx}, 'name', this.value)" /></td>
+                <td><input type="text" value="${escAttr(i.spec || '')}" oninput="updateEditedItem(${idx}, ${itemIdx}, 'spec', this.value)" /></td>
+                <td><input type="text" value="${escAttr(i.unit || '')}" oninput="updateEditedItem(${idx}, ${itemIdx}, 'unit', this.value)" /></td>
+                <td><input type="number" value="${escAttr(i.quantity ?? '')}" oninput="updateEditedItem(${idx}, ${itemIdx}, 'quantity', this.value)" /></td>
+                <td><input type="number" value="${escAttr(i.unit_price ?? '')}" placeholder="選填" oninput="updateEditedItem(${idx}, ${itemIdx}, 'unit_price', this.value)" /></td>
+                <td><input type="number" id="p-sub-${idx}-${itemIdx}" value="${escAttr(i.subtotal ?? '')}" oninput="updateEditedItem(${idx}, ${itemIdx}, 'subtotal', this.value)" /></td>
+                <td><input type="text" value="${escAttr(i.note || '')}" oninput="updateEditedItem(${idx}, ${itemIdx}, 'note', this.value)" /></td>
+                ${moveCell}
+                <td><button type="button" class="secondary" onclick="removeEditedItem(${idx}, ${itemIdx})">刪除</button></td>
+              </tr>`;
+            }).join("")}</tbody>
           </table>
         </div>
       `;
@@ -751,7 +950,7 @@
       const res = await fetch("/api/print-preview", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(buildPayload())
+        body: JSON.stringify(buildPayload(true))
       });
       const data = await res.json();
       if (!data.ok) return showStatus(data.error, false);
@@ -823,19 +1022,19 @@
       const res = await fetch("/api/preview", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(buildPayload())
+        body: JSON.stringify(buildPayload(false))
       });
       const data = await res.json();
       if (!data.ok) return showStatus(data.error, false);
       renderPreview(data.requests);
-      showStatus(`預覽完成，共 ${data.requests.length} 張請購單`);
+      showStatus(`預覽完成，共 ${data.requests.length} 張請購單（可直接於下方修改）`);
     }
 
     async function generateExcel() {
       const res = await fetch("/api/generate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(buildPayload())
+        body: JSON.stringify(buildPayload(true))
       });
       const data = await res.json();
       if (!data.ok) return showStatus(data.error, false);
