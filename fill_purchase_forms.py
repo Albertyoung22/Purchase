@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any
 
 import openpyxl
+from openpyxl.styles import Alignment
 from openpyxl.utils import column_index_from_string, get_column_letter
 from openpyxl.worksheet.worksheet import Worksheet
 
@@ -289,6 +290,49 @@ def _detect_sheet_layout(ws: Worksheet, cfg: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _display_width(text: str) -> int:
+    """Estimate half-width character count (CJK/full-width = 2, ASCII = 1)."""
+    return sum(2 if ord(ch) > 0x7F else 1 for ch in text)
+
+
+def _enable_wrap(ws: Worksheet, coord: str, *, horizontal: str | None = None) -> None:
+    """Enable wrap_text on a cell while preserving its other alignment properties."""
+    from copy import copy
+
+    target = resolve_top_left_coord(ws, coord)
+    cell = ws[target]
+    al = copy(cell.alignment) if cell.alignment else Alignment()
+    al.wrap_text = True
+    if horizontal is not None:
+        al.horizontal = horizontal
+    cell.alignment = al
+
+
+def _fit_item_row_height(ws: Worksheet, row_num: int, item: Any, cols: dict[str, str]) -> None:
+    """Ensure wrapped text in name/spec/note columns fits without vertical clipping."""
+    import math
+
+    # Approximate half-width char capacities per merged cell in template.xlsx (font size 11-12)
+    checks = [
+        (cols.get("name"), item.name, 22),
+        (cols.get("spec"), item.spec, 13),
+        (cols.get("note"), item.display_note, 16),
+    ]
+    max_lines = 1
+    for col_letter, text, capacity in checks:
+        if not col_letter or not text:
+            continue
+        _enable_wrap(ws, f"{col_letter}{row_num}")
+        lines_for_col = 0
+        for segment in str(text).splitlines() or [""]:
+            lines_for_col += max(1, math.ceil(_display_width(segment) / capacity))
+        max_lines = max(max_lines, lines_for_col)
+
+    if max_lines > 1:
+        base_h = ws.row_dimensions[row_num].height or 21.0
+        ws.row_dimensions[row_num].height = max(base_h, max_lines * 16.0 + 6.0)
+
+
 def _hide_instruction_row(ws: Worksheet) -> None:
     """Clear and hide the top '操作步驟：...' yellow banner row if present."""
     from openpyxl.styles import PatternFill
@@ -431,12 +475,16 @@ def fill_worksheet(ws: Worksheet, req: PurchaseRequest, cfg: dict[str, Any]) -> 
 
     if req.plan_name and layout["plan_coord"]:
         safe_set_cell(ws, layout["plan_coord"], req.plan_name, overwrite_formula=True)
+        _enable_wrap(ws, layout["plan_coord"])
     if req.level1 and layout["lv1_coord"]:
         safe_set_cell(ws, layout["lv1_coord"], req.level1, overwrite_formula=True)
+        _enable_wrap(ws, layout["lv1_coord"])
     if req.level2 and layout["lv2_coord"]:
         safe_set_cell(ws, layout["lv2_coord"], req.level2, overwrite_formula=True)
+        _enable_wrap(ws, layout["lv2_coord"])
     if req.level3 and layout["lv3_coord"]:
         safe_set_cell(ws, layout["lv3_coord"], req.level3, overwrite_formula=True)
+        _enable_wrap(ws, layout["lv3_coord"])
 
     if req.payer_name and cells.get("payer_name"):
         template = cells.get("payer_template", "{name}")
@@ -448,12 +496,14 @@ def fill_worksheet(ws: Worksheet, req: PurchaseRequest, cfg: dict[str, Any]) -> 
 
     if req.department and layout["dept_coord"]:
         safe_set_cell(ws, layout["dept_coord"], req.department)
+        _enable_wrap(ws, layout["dept_coord"], horizontal="center")
 
     if req.request_date and layout["date_coord"]:
         safe_set_cell(ws, layout["date_coord"], req.request_date)
 
     if req.purpose and layout["purpose_coord"]:
         safe_set_cell(ws, layout["purpose_coord"], req.purpose)
+        _enable_wrap(ws, layout["purpose_coord"])
 
     start_row = layout["start_row"]
     max_rows = layout["max_rows"]
@@ -496,6 +546,7 @@ def fill_worksheet(ws: Worksheet, req: PurchaseRequest, cfg: dict[str, Any]) -> 
             )
         if cols.get("note") and item.display_note:
             safe_set_cell(ws, f"{cols['note']}{row_num}", item.display_note)
+        _fit_item_row_height(ws, row_num, item, cols)
 
     # Preserves =SUM(...) / header link formulas if present in template
     if layout["total_coord"]:

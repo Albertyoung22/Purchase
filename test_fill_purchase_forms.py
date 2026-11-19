@@ -472,6 +472,34 @@ class TestFillPurchaseForms(unittest.TestCase):
             self.assertTrue(files[0].exists())
             self.assertTrue(files[1].exists())
 
+    def test_long_item_name_enables_wrap_and_expands_row_height(self) -> None:
+        cfg = load_config(Path("config.json"))
+        req = PurchaseRequest(
+            request_id="WRAP-001",
+            budget_code="321",
+            department="總務處",
+            purpose="這是一段比較長的用途說明文字用來測試自動換行是否正確開啟",
+            items=[
+                LineItem(
+                    name="115年09-10月【IDREES 伊德萊斯】超長品名測試自動換行與列高調整",
+                    unit="個",
+                    quantity=1,
+                    unit_price=599,
+                )
+            ],
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_dir = Path(tmp)
+            tpl_path = build_mock_template(tmp_dir / "tpl.xlsx")
+            out_dir = tmp_dir / "output"
+            files = generate_from_requests(tpl_path, [req], out_dir, cfg)
+            wb = openpyxl.load_workbook(files[0])
+            ws = wb.active
+            self.assertTrue(ws["A19"].alignment.wrap_text)
+            self.assertGreater(ws.row_dimensions[19].height, 21.0)
+            self.assertTrue(ws["A27"].alignment.wrap_text)
+            self.assertEqual(ws["C16"].alignment.horizontal, "center")
+
 
 if __name__ == "__main__":
     unittest.main()
