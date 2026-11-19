@@ -517,14 +517,24 @@
 
     async function scanDocumentImage() {
       const file = document.getElementById("scanFile").files[0];
-      if (!file) return showStatus("請先選擇發票或估價單圖片檔", false);
-      showStatus("正在掃描分析影像中，請稍候...");
+      if (!file) return showStatus("請先選擇發票或估價單檔案", false);
+      showStatus("正在掃描分析中，請稍候...");
       const fd = new FormData();
       fd.append("file", file);
       fd.append("pdf_password", document.getElementById("pdfPassword").value.trim());
       fd.append("gemini_api_key", document.getElementById("geminiKey").value.trim());
-      const res = await fetch("/api/scan-image", { method: "POST", body: fd });
-      const data = await res.json();
+      let data;
+      try {
+        const res = await fetch("/api/scan-image", { method: "POST", body: fd });
+        const text = await res.text();
+        try {
+          data = JSON.parse(text);
+        } catch {
+          return showStatus(`伺服器回應異常 (HTTP ${res.status})，可能是免費方案記憶體不足或逾時，請稍後重試或改填 Gemini API Key。`, false);
+        }
+      } catch (err) {
+        return showStatus("連線逾時或中斷：" + err.message, false);
+      }
       if (!data.ok) return showStatus(data.error, false);
 
       const inv = data.invoice;
