@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import subprocess
 from pathlib import Path
 
@@ -10,6 +11,8 @@ import openpyxl
 
 def export_xlsx_to_pdf_with_excel(xlsx_path: Path, pdf_path: Path, timeout_sec: int = 30) -> bool:
     """Use installed Microsoft Excel COM to export an .xlsx file to an exact print-layout PDF."""
+    if os.name != "nt":
+        return False
     xlsx_abs = str(xlsx_path.resolve()).replace("'", "''")
     pdf_abs = str(pdf_path.resolve()).replace("'", "''")
     pdf_path.parent.mkdir(parents=True, exist_ok=True)

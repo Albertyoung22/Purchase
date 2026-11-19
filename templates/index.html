@@ -153,6 +153,8 @@
     .main-nav-btn.active { background: var(--primary); color: #fff; }
     .main-view { display: none; }
     .main-view.active { display: block; }
+    .excel-fallback { width: 100%; border-collapse: collapse; font-family: "DFKai-SB", "標楷體", serif; font-size: 13px; background: #fff; }
+    .excel-fallback td { border: 1px solid #334155; padding: 5px 7px; text-align: center; }
   </style>
 </head>
 <body>
@@ -161,10 +163,12 @@
       <h1>臺南市立土城高級中學｜採購申請單自動化系統</h1>
       <div class="sub">Flask + Waitress 桌面應用程式 ｜ 支援電子發票解析、明細批次填表、OR-Tools CP-SAT 最佳化分單</div>
     </div>
+    {% if not is_cloud %}
     <div style="display:flex; gap:8px;">
       <button class="secondary" onclick="openOutputFolder()">開啟輸出資料夾</button>
       <button class="danger" onclick="shutdownApp()">關閉程式</button>
     </div>
+    {% endif %}
   </header>
 
   <div class="container">

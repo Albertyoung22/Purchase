@@ -359,6 +359,7 @@ def index() -> str:
         has_template=tpl is not None,
         template_name=tpl.name if tpl else "",
         sample_invoice=sample_inv,
+        is_cloud=bool(os.environ.get("RENDER") or os.environ.get("PORT")),
     )
 
 
@@ -702,6 +703,13 @@ def _open_desktop_window(url: str) -> None:
 
 
 def run_desktop_app() -> None:
+    env_port = os.environ.get("PORT")
+    if env_port:
+        port = int(env_port)
+        print(f"採購單自動化系統雲端模式已啟動：0.0.0.0:{port} (Waitress WSGI)")
+        serve(app, host="0.0.0.0", port=port, threads=4)
+        return
+
     port = _find_free_port(5050)
     url = f"http://127.0.0.1:{port}"
     print(f"採購單自動化桌面系統已啟動：{url} (Waitress WSGI)")
