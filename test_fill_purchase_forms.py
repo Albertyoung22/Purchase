@@ -500,6 +500,29 @@ class TestFillPurchaseForms(unittest.TestCase):
             self.assertTrue(ws["A27"].alignment.wrap_text)
             self.assertEqual(ws["C16"].alignment.horizontal, "center")
 
+    def test_empty_payer_name_clears_template_default_payer(self) -> None:
+        cfg = load_config(Path("config.json"))
+        req = PurchaseRequest(
+            request_id="PAYER-CLEAR",
+            budget_code="321",
+            department="總務處",
+            payer_name="",
+            items=[LineItem(name="原子筆", unit="支", quantity=2, unit_price=30)],
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_dir = Path(tmp)
+            tpl_path = tmp_dir / "tpl.xlsx"
+            build_mock_template(tpl_path)
+            wb_tpl = openpyxl.load_workbook(tpl_path)
+            wb_tpl.active["J8"] = "因業務執行需要由(簽章) 楊敦州 代墊"
+            wb_tpl.save(tpl_path)
+
+            files = generate_from_requests(tpl_path, [req], tmp_dir / "output", cfg)
+            wb = openpyxl.load_workbook(files[0])
+            val = wb.active["J8"].value
+            self.assertNotIn("楊敦州", val)
+            self.assertIn("代墊", val)
+
 
 if __name__ == "__main__":
     unittest.main()

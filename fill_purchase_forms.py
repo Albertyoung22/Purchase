@@ -486,9 +486,10 @@ def fill_worksheet(ws: Worksheet, req: PurchaseRequest, cfg: dict[str, Any]) -> 
         safe_set_cell(ws, layout["lv3_coord"], req.level3, overwrite_formula=True)
         _enable_wrap(ws, layout["lv3_coord"])
 
-    if req.payer_name and cells.get("payer_name"):
+    if cells.get("payer_name"):
         template = cells.get("payer_template", "{name}")
-        safe_set_cell(ws, cells["payer_name"], template.format(name=req.payer_name))
+        display_payer = req.payer_name.strip() if req.payer_name and req.payer_name.strip() else "     "
+        safe_set_cell(ws, cells["payer_name"], template.format(name=display_payer))
 
     if req.receipt_count is not None and layout["receipt_coord"]:
         rc_template = cells.get("receipt_count_template", "黏貼單據  {count}  張")
