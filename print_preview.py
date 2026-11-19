@@ -59,8 +59,51 @@ def render_pdf_to_pngs(pdf_path: Path, out_dir: Path, prefix: str = "preview") -
     return images
 
 
+def _eval_simple_formula(ws: openpyxl.worksheet.worksheet.Worksheet, val: object) -> str:
+    """Evaluate basic =F*G, =ROUND(F*G,0), =SUM(H1:H2), and =H25 formulas for HTML preview."""
+    import re
+
+    if val is None:
+        return ""
+    if not (isinstance(val, str) and val.startswith("=")):
+        return str(val)
+
+    expr = val[1:].strip().upper()
+    # =H28 or =H25
+    m_ref = re.fullmatch(r"([A-Z]+)(\d+)", expr)
+    if m_ref:
+        return _eval_simple_formula(ws, ws[expr].value)
+
+    # =F21*G21 or =ROUND(F21*G21,0)
+    m_mul = re.fullmatch(r"(?:ROUND\()?([A-Z]+\d+)\s*\*\s*([A-Z]+\d+)(?:,\s*0\))?", expr)
+    if m_mul:
+        v1 = ws[m_mul.group(1)].value
+        v2 = ws[m_mul.group(2)].value
+        if isinstance(v1, (int, float)) and isinstance(v2, (int, float)):
+            prod = v1 * v2
+            return f"{int(round(prod)):,}"
+        return ""
+
+    # =SUM(H18:H24)
+    m_sum = re.fullmatch(r"SUM\(([A-Z]+)(\d+):([A-Z]+)(\d+)\)", expr)
+    if m_sum:
+        col = m_sum.group(1)
+        r1, r2 = int(m_sum.group(2)), int(m_sum.group(4))
+        total = 0.0
+        for r in range(r1, r2 + 1):
+            raw_txt = _eval_simple_formula(ws, ws[f"{col}{r}"].value).replace(",", "")
+            try:
+                if raw_txt:
+                    total += float(raw_txt)
+            except ValueError:
+                pass
+        return f"{int(round(total)):,}"
+
+    return val
+
+
 def render_xlsx_fallback_html(xlsx_path: Path) -> str:
-    """Fallback HTML table preview if Microsoft Excel COM is not available."""
+    """Fallback HTML table preview if Microsoft Excel COM is not available (e.g. Render Linux)."""
     wb = openpyxl.load_workbook(xlsx_path, data_only=False)
     ws = wb.active
 
@@ -85,8 +128,7 @@ def render_xlsx_fallback_html(xlsx_path: Path) -> str:
             if (r, c) in merged_skip:
                 continue
             rs, cs = merged_span.get((r, c), (1, 1))
-            val = ws.cell(r, c).value
-            text = "" if val is None else str(val)
+            text = _eval_simple_formula(ws, ws.cell(r, c).value)
             attrs = ""
             if rs > 1:
                 attrs += f' rowspan="{rs}"'

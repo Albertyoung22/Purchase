@@ -775,14 +775,40 @@
         `;
         showStatus("真實 Excel 列印預覽已產生！");
       } else {
+        window._lastFallbackHtml = data.html;
         box.innerHTML = `
-          <div style="padding:12px; border:1px solid var(--border); background:#fff; border-radius:8px;">
-            <strong>表單預覽（HTML 備援模式）</strong>
-            <div style="overflow-x:auto; margin-top:8px;">${data.html}</div>
+          <div style="padding:12px; border:1px solid #bfdbfe; background:#eff6ff; border-radius:8px;">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+              <strong>雲端表單列印預覽（共 ${data.total_forms} 份，顯示第 1 份）</strong>
+              <div style="display:flex; gap:8px;">
+                <button onclick="printFallbackHtml()">直接列印 / 另存 PDF</button>
+                <button class="secondary" onclick="document.getElementById('printPreviewArea').style.display='none'">關閉預覽</button>
+              </div>
+            </div>
+            <div style="overflow-x:auto; background:#fff; padding:14px; border-radius:6px; box-shadow:0 2px 8px rgba(0,0,0,0.1);">${data.html}</div>
           </div>
         `;
-        showStatus("表單預覽已產生（未使用 Excel COM）");
+        showStatus("雲端表單預覽已產生！（可點選「直接列印 / 另存 PDF」）");
       }
+    }
+
+    function printFallbackHtml() {
+      const win = window.open("", "_blank", "width=900,height=1100");
+      if (!win) return alert("請允許瀏覽器開啟彈出視窗以進行列印");
+      win.document.write(`
+        <!DOCTYPE html>
+        <html lang="zh-Hant"><head><meta charset="UTF-8"><title>採購申請單列印</title>
+        <style>
+          @page { size: A4 portrait; margin: 10mm; }
+          body { font-family: "DFKai-SB", "標楷體", serif; margin: 0; }
+          table { width: 100%; border-collapse: collapse; font-size: 12px; }
+          td { border: 1px solid #000; padding: 4px 6px; text-align: center; }
+        </style></head>
+        <body>${window._lastFallbackHtml || ""}</body></html>
+      `);
+      win.document.close();
+      win.focus();
+      setTimeout(() => win.print(), 250);
     }
 
     async function previewForms() {
