@@ -9,6 +9,7 @@ import re
 import shutil
 import socket
 import subprocess
+import tempfile
 import threading
 import time
 import webbrowser
@@ -63,6 +64,13 @@ app = Flask(
 app.config["MAX_CONTENT_LENGTH"] = 16 * 1024 * 1024  # 16 MB
 
 
+_BUDGET_OPTIONS_CACHE: dict[str, Any] = {"key": None, "data": None}
+
+
+def _is_cloud_mode() -> bool:
+    return bool(os.environ.get("RENDER") or os.environ.get("PORT"))
+
+
 def _active_template_path() -> Path | None:
     uploaded = UPLOAD_DIR / "template.xlsx"
     if uploaded.exists():
@@ -75,6 +83,11 @@ def _active_template_path() -> Path | None:
 
 def _collect_budget_options() -> dict[str, Any]:
     """Collect budget code mappings & dropdown options from every worksheet in the template."""
+    tpl = _active_template_path()
+    cache_key = (str(tpl.resolve()), tpl.stat().st_mtime_ns) if tpl and tpl.exists() else None
+    if _BUDGET_OPTIONS_CACHE["key"] == cache_key and _BUDGET_OPTIONS_CACHE["data"] is not None:
+        return _BUDGET_OPTIONS_CACHE["data"]
+
     entries: dict[str, dict[str, str]] = {}
     for code, (plan, lv1, lv2, lv3) in BUDGET_CODE_MAP.items():
         entries[code] = {
@@ -95,7 +108,6 @@ def _collect_budget_options() -> dict[str, Any]:
 
     payer_re = re.compile(r"由\(簽章\)\s*(\S+?)\s*代墊")
 
-    tpl = _active_template_path()
     if tpl and tpl.exists():
         try:
             wb = openpyxl.load_workbook(tpl, data_only=True, read_only=True)
@@ -197,7 +209,7 @@ def _collect_budget_options() -> dict[str, Any]:
                 seen.append(v)
         return seen
 
-    return {
+    result = {
         "entries": ordered,
         "plan_names": _uniq([e["plan_name"] for e in ordered] + extra_plans),
         "level1_options": _uniq([e["level1"] for e in ordered] + extra_lv1),
@@ -207,6 +219,9 @@ def _collect_budget_options() -> dict[str, Any]:
         "payers": _uniq(extra_payers),
         "purposes": _uniq(extra_purposes),
     }
+    _BUDGET_OPTIONS_CACHE["key"] = cache_key
+    _BUDGET_OPTIONS_CACHE["data"] = result
+    return result
 
 
 def _requests_from_payload(payload: dict[str, Any], cfg: dict[str, Any]) -> list[PurchaseRequest]:
@@ -247,6 +262,7 @@ def _requests_from_payload(payload: dict[str, Any], cfg: dict[str, Any]) -> list
             payer_name=payer_name,
             purpose=purpose,
             max_rows=max_rows,
+            summarize_over_max=not bool(payload.get("auto_split")),
         )
         if request_date:
             reqs[0].request_date = request_date
@@ -312,6 +328,7 @@ def _requests_from_payload(payload: dict[str, Any], cfg: dict[str, Any]) -> list
                     payer_name=payer_name,
                     purpose=purpose,
                     max_rows=max_rows,
+                    summarize_over_max=not bool(payload.get("auto_split")),
                 )
             )
         return _apply_budget_fields(read_requests_csv(uploaded_csv))
@@ -360,7 +377,7 @@ def index() -> str:
         has_template=tpl is not None,
         template_name=tpl.name if tpl else "",
         sample_invoice=sample_inv,
-        is_cloud=bool(os.environ.get("RENDER") or os.environ.get("PORT")),
+        is_cloud=_is_cloud_mode(),
     )
 
 
@@ -399,28 +416,31 @@ def api_inspect_template():
     if not tpl:
         return jsonify({"ok": False, "error": "尚未上傳或放置 template.xlsx 範本檔"}), 400
     wb = openpyxl.load_workbook(tpl, data_only=False)
-    keywords = ("憑證", "預算", "代墊", "請購日期", "名", "合計", "用途")
-    sheets = []
-    for name in wb.sheetnames:
-        ws = wb[name]
-        labels = []
-        formulas = []
-        for row in ws.iter_rows(min_row=1, max_row=min(ws.max_row, 50), max_col=min(ws.max_column, 15)):
-            for cell in row:
-                val = cell.value
-                if isinstance(val, str):
-                    if val.startswith("="):
-                        formulas.append(f"{cell.coordinate}: {val}")
-                    elif any(kw in val.replace(" ", "") for kw in keywords):
-                        labels.append(f"{cell.coordinate}: {val.strip()[:28]}")
-        sheets.append({
-            "name": name,
-            "rows": ws.max_row,
-            "cols": ws.max_column,
-            "labels": labels[:15],
-            "formulas": formulas[:12],
-        })
-    return jsonify({"ok": True, "template": tpl.name, "sheets": sheets})
+    try:
+        keywords = ("憑證", "預算", "代墊", "請購日期", "名", "合計", "用途")
+        sheets = []
+        for name in wb.sheetnames:
+            ws = wb[name]
+            labels = []
+            formulas = []
+            for row in ws.iter_rows(min_row=1, max_row=min(ws.max_row, 50), max_col=min(ws.max_column, 15)):
+                for cell in row:
+                    val = cell.value
+                    if isinstance(val, str):
+                        if val.startswith("="):
+                            formulas.append(f"{cell.coordinate}: {val}")
+                        elif any(kw in val.replace(" ", "") for kw in keywords):
+                            labels.append(f"{cell.coordinate}: {val.strip()[:28]}")
+            sheets.append({
+                "name": name,
+                "rows": ws.max_row,
+                "cols": ws.max_column,
+                "labels": labels[:15],
+                "formulas": formulas[:12],
+            })
+        return jsonify({"ok": True, "template": tpl.name, "sheets": sheets})
+    finally:
+        wb.close()
 
 
 @app.post("/api/save-config")
@@ -443,17 +463,16 @@ def api_scan_image():
     if ext not in (".jpg", ".jpeg", ".png", ".webp", ".bmp", ".pdf"):
         return jsonify({"ok": False, "error": "僅支援圖片 (.jpg, .png, .webp, .bmp) 或 .pdf 格式"}), 400
 
-    UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
-    dest = UPLOAD_DIR / f"scan_input{ext}"
-    file.save(dest)
-
     gemini_key = request.form.get("gemini_api_key", "")
     pdf_password = request.form.get("pdf_password", "")
     cfg = load_config(CONFIG_PATH)
     threshold = int(cfg.get("under_3000_threshold", 3000))
 
     try:
-        res = scan_document(dest, gemini_api_key=gemini_key, pdf_password=pdf_password, threshold=threshold)
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            dest = Path(tmp_dir) / f"scan_input{ext}"
+            file.save(dest)
+            res = scan_document(dest, gemini_api_key=gemini_key, pdf_password=pdf_password, threshold=threshold)
         inv = res.invoice
         return jsonify({
             "ok": True,
@@ -515,18 +534,22 @@ def api_parse_invoice_text():
         return jsonify({"ok": False, "error": str(exc)}), 400
 
 
+def _prepare_requests_from_payload(payload: dict[str, Any], cfg: dict[str, Any]) -> list[PurchaseRequest]:
+    """Build and split/chunk PurchaseRequest list according to payload options."""
+    reqs = _requests_from_payload(payload, cfg)
+    max_rows = int(cfg["items_table"]["max_rows"])
+    if payload.get("auto_split"):
+        max_amount = float(payload.get("max_amount") or 3000)
+        return split_requests_opt(reqs, max_amount=max_amount, max_rows=max_rows)
+    return chunk_requests_by_max_rows(reqs, max_rows=max_rows)
+
+
 @app.post("/api/preview")
 def api_preview():
     try:
         payload = request.get_json(force=True)
         cfg = load_config(CONFIG_PATH)
-        reqs = _requests_from_payload(payload, cfg)
-        max_rows = int(cfg["items_table"]["max_rows"])
-        if payload.get("auto_split"):
-            max_amount = float(payload.get("max_amount") or 3000)
-            reqs = split_requests_opt(reqs, max_amount=max_amount, max_rows=max_rows)
-        else:
-            reqs = chunk_requests_by_max_rows(reqs, max_rows=max_rows)
+        reqs = _prepare_requests_from_payload(payload, cfg)
         return jsonify({"ok": True, "requests": _serialize_requests(reqs)})
     except Exception as exc:
         return jsonify({"ok": False, "error": str(exc)}), 400
@@ -538,13 +561,7 @@ def api_generate():
         tpl = _active_template_path()
         payload = request.get_json(force=True)
         cfg = load_config(CONFIG_PATH)
-        reqs = _requests_from_payload(payload, cfg)
-        max_rows = int(cfg["items_table"]["max_rows"])
-        if payload.get("auto_split"):
-            max_amount = float(payload.get("max_amount") or 3000)
-            reqs = split_requests_opt(reqs, max_amount=max_amount, max_rows=max_rows)
-        else:
-            reqs = chunk_requests_by_max_rows(reqs, max_rows=max_rows)
+        reqs = _prepare_requests_from_payload(payload, cfg)
 
         files = generate_from_requests(tpl, reqs, OUTPUT_DIR, cfg)
         append_history(HISTORY_PATH, reqs, files)
@@ -574,13 +591,7 @@ def api_print_preview():
         tpl = _active_template_path()
         payload = request.get_json(force=True)
         cfg = load_config(CONFIG_PATH)
-        reqs = _requests_from_payload(payload, cfg)
-        max_rows = int(cfg["items_table"]["max_rows"])
-        if payload.get("auto_split"):
-            max_amount = float(payload.get("max_amount") or 3000)
-            reqs = split_requests_opt(reqs, max_amount=max_amount, max_rows=max_rows)
-        else:
-            reqs = chunk_requests_by_max_rows(reqs, max_rows=max_rows)
+        reqs = _prepare_requests_from_payload(payload, cfg)
 
         preview_dir = OUTPUT_DIR / "_preview"
         preview_dir.mkdir(parents=True, exist_ok=True)
@@ -674,6 +685,8 @@ def api_export_history():
 
 @app.post("/api/open-output")
 def api_open_output():
+    if _is_cloud_mode():
+        return jsonify({"ok": False, "error": "雲端模式下無法開啟本機資料夾"}), 403
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     if os.name == "nt":
         os.startfile(str(OUTPUT_DIR))  # type: ignore[attr-defined]
@@ -682,6 +695,8 @@ def api_open_output():
 
 @app.post("/api/shutdown")
 def api_shutdown():
+    if _is_cloud_mode():
+        return jsonify({"ok": False, "error": "雲端模式下不允許遠端關閉伺服器"}), 403
     threading.Timer(0.3, lambda: os._exit(0)).start()
     return jsonify({"ok": True})
 

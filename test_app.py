@@ -1,6 +1,7 @@
 """Integration tests for the Flask + Waitress desktop app."""
 
 import io
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -393,6 +394,38 @@ class TestDesktopApp(unittest.TestCase):
                 # Clear remaining
                 clr_res = self.client.post("/api/history/clear")
                 self.assertEqual(clr_res.get_json()["summary"]["total_count"], 0)
+
+    def test_cloud_mode_blocks_shutdown_and_open_output(self) -> None:
+        with patch.dict(os.environ, {"PORT": "8080"}):
+            res_shutdown = self.client.post("/api/shutdown")
+            self.assertEqual(res_shutdown.status_code, 403)
+            self.assertFalse(res_shutdown.get_json()["ok"])
+
+            res_open = self.client.post("/api/open-output")
+            self.assertEqual(res_open.status_code, 403)
+            self.assertFalse(res_open.get_json()["ok"])
+
+    def test_invoice_text_auto_split_preserves_over_max_rows_items(self) -> None:
+        lines = ["AB-99887766", "2026-11-19"]
+        for i in range(1, 15):
+            lines.append(f"測試品項{i}  1  100  100TX")
+        lines.append("總計: 1400")
+        res = self.client.post(
+            "/api/preview",
+            json={
+                "mode": "invoice_text",
+                "invoice_text": "\n".join(lines),
+                "budget_code": "321",
+                "department": "總務處",
+                "auto_split": True,
+                "max_amount": 3000,
+            },
+        )
+        data = res.get_json()
+        self.assertTrue(data["ok"])
+        self.assertEqual(len(data["requests"]), 2)
+        total_items = sum(len(r["items"]) for r in data["requests"])
+        self.assertEqual(total_items, 14)
 
 
 if __name__ == "__main__":

@@ -447,6 +447,31 @@ class TestFillPurchaseForms(unittest.TestCase):
             self.assertEqual(wb2.active["A18"].value, "文具品項13")
             self.assertEqual(wb2.active["A19"].value, "文具品項14")
 
+    def test_duplicate_request_ids_generate_distinct_filenames(self) -> None:
+        cfg = load_config(Path("config.json"))
+        reqs = [
+            PurchaseRequest(
+                request_id="DUP-001",
+                budget_code="321",
+                department="總務處",
+                items=[LineItem(name="品項A", unit="個", quantity=1, unit_price=100)],
+            ),
+            PurchaseRequest(
+                request_id="DUP-001",
+                budget_code="321",
+                department="總務處",
+                items=[LineItem(name="品項B", unit="個", quantity=1, unit_price=200)],
+            ),
+        ]
+        with tempfile.TemporaryDirectory() as tmp:
+            out_dir = Path(tmp) / "output"
+            files = generate_from_requests(None, reqs, out_dir, cfg)
+            self.assertEqual(len(files), 2)
+            self.assertEqual(files[0].name, "DUP-001_採購申請單.xlsx")
+            self.assertEqual(files[1].name, "DUP-001_2_採購申請單.xlsx")
+            self.assertTrue(files[0].exists())
+            self.assertTrue(files[1].exists())
+
 
 if __name__ == "__main__":
     unittest.main()

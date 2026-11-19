@@ -32,7 +32,7 @@ _NOISE_WORDS = ("現金", "找零", "信用卡", "悠遊卡", "LINEPAY", "刷卡
 def extract_candidates_from_text(raw_text: str, parsed: ParsedInvoice) -> list[CandidateItem]:
     """Build CandidateItem list from parsed items and any extra numeric lines in raw_text."""
     candidates: list[CandidateItem] = []
-    seen_names: set[str] = set()
+    seen_keys: set[tuple[str, float]] = set()
 
     for it in parsed.items:
         arith_ok = (
@@ -54,7 +54,7 @@ def extract_candidates_from_text(raw_text: str, parsed: ParsedInvoice) -> list[C
                 is_noise_hint=is_noise,
             )
         )
-        seen_names.add(it.name)
+        seen_keys.add((it.name, float(it.subtotal)))
 
     # Also scan raw lines for fallback "name  amount" patterns that might be missed or payment lines
     line_num_re = re.compile(r"^(?P<name>[^\d\s].*?)\s+\$?(?P<amt>\d+(?:,\d{3})*(?:\.\d+)?)\s*(?P<tx>TX|T)?\s*$")
@@ -65,9 +65,9 @@ def extract_candidates_from_text(raw_text: str, parsed: ParsedInvoice) -> list[C
             continue
         raw_name = m.group("name").strip()
         name, spec = split_name_and_spec(raw_name)
-        if name in seen_names or any(k in raw_name for k in ("總計", "合計", "隨機碼", "統編", "統一編號", "日期")):
-            continue
         amt = float(m.group("amt").replace(",", ""))
+        if (name, amt) in seen_keys or any(k in raw_name for k in ("總計", "合計", "隨機碼", "統編", "統一編號", "日期")):
+            continue
         amt_clean: int | float = int(amt) if amt.is_integer() else amt
         is_noise = any(nw in name.replace(" ", "").upper() for nw in _NOISE_WORDS)
         candidates.append(
@@ -82,7 +82,7 @@ def extract_candidates_from_text(raw_text: str, parsed: ParsedInvoice) -> list[C
                 is_noise_hint=is_noise,
             )
         )
-        seen_names.add(name)
+        seen_keys.add((name, amt))
 
     return candidates
 

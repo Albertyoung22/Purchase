@@ -518,6 +518,7 @@ def invoices_to_requests(
     payer_name: str = "",
     purpose: str = "",
     max_rows: int = 7,
+    summarize_over_max: bool = True,
 ) -> list[PurchaseRequest]:
     """Convert ParsedInvoice objects into PurchaseRequest objects ready for Excel filling."""
     requests: list[PurchaseRequest] = []
@@ -525,7 +526,7 @@ def invoices_to_requests(
         req_id = inv.invoice_no or f"INV-{idx:03d}"
         req_purpose = purpose or (f"{inv.seller_name}採購" if inv.seller_name else "發票採購")
 
-        if len(inv.items) > max_rows and inv.total_amount is not None:
+        if summarize_over_max and len(inv.items) > max_rows and inv.total_amount is not None:
             seller_prefix = inv.seller_name or "發票"
             items = [
                 LineItem(
@@ -794,9 +795,16 @@ def generate_from_requests(
     max_rows = int(cfg["items_table"]["max_rows"])
     chunked_requests = chunk_requests_by_max_rows(requests, max_rows=max_rows)
     generated_files: list[Path] = []
+    used_stems: set[str] = set()
     for req in chunked_requests:
-        safe_id = sanitize_filename(req.request_id)
-        out_path = output_dir / f"{safe_id}_採購申請單.xlsx"
+        safe_id = sanitize_filename(req.request_id) or "REQ"
+        candidate_stem = safe_id
+        seq = 2
+        while candidate_stem in used_stems:
+            candidate_stem = f"{safe_id}_{seq}"
+            seq += 1
+        used_stems.add(candidate_stem)
+        out_path = output_dir / f"{candidate_stem}_採購申請單.xlsx"
         if template_path is None:
             build_purchase_form_xlsx(req, out_path)
         else:

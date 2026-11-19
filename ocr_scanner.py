@@ -118,12 +118,15 @@ def _scan_with_gemini(image_path: Path, api_key: str) -> tuple[str, str, ParsedI
 
     url = (
         "https://generativelanguage.googleapis.com/v1beta/models/"
-        f"gemini-2.5-flash:generateContent?key={api_key}"
+        "gemini-2.5-flash:generateContent"
     )
     req = urllib.request.Request(
         url,
         data=json.dumps(body).encode("utf-8"),
-        headers={"Content-Type": "application/json"},
+        headers={
+            "Content-Type": "application/json",
+            "x-goog-api-key": api_key,
+        },
         method="POST",
     )
     with urllib.request.urlopen(req, timeout=30) as resp:
