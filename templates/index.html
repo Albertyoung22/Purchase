@@ -473,8 +473,24 @@
           <span>出差行程與費用明細</span>
           <button type="button" class="secondary" onclick="addTravelDayRow()">＋ 新增一日行程</button>
         </div>
+        <div style="background:#f8fafc; border:1px solid var(--border); border-radius:8px; padding:10px 12px; margin-bottom:10px;">
+          <div class="row" style="align-items:center;">
+            <div class="col" style="flex:3; min-width:260px;">
+              <label>智慧起訖路線里程計算（輸入地點以 <code>-&gt;</code> 分隔，免查地圖）</label>
+              <input type="text" id="travelSmartRoute" placeholder="例如：土城高中 -> 教育局 -> 南寧高中" />
+            </div>
+            <div style="display:flex; align-items:center; gap:6px; padding-top:16px;">
+              <input type="checkbox" id="travelRoundTrip" checked style="width:auto;" />
+              <label for="travelRoundTrip" style="margin:0; cursor:pointer;">自動來回（返回起點）</label>
+            </div>
+            <div style="padding-top:16px;">
+              <button type="button" onclick="calcSmartRouteToRow()">智慧計算里程</button>
+            </div>
+          </div>
+          <div id="travelSmartResult" style="font-size:12px; color:var(--accent); margin-top:6px;"></div>
+        </div>
         <p style="font-size:12px; color:var(--muted); margin:0 0 8px;">
-          自用車多點順路里程範例：<code>土城高中-&gt;教育局:14, 教育局-&gt;南寧高中:6, 南寧高中-&gt;土城高中:18</code>（自動加總 × 3.25 元並推算雜費級距；單程 &lt;5km=0、5~60km=120、≥60km=300）。
+          也可直接在表格「起訖地點」輸入 <code>土城高中 -&gt; 教育局</code> 後點該列「算里程」，或手動指定 <code>A-&gt;B:14, B-&gt;A:14</code>。
         </p>
         <div style="overflow-x:auto;">
           <table id="travelDaysTable">
@@ -1401,9 +1417,58 @@
         <td><input type="number" class="t-misc" value="${preset.misc_fee || ""}" placeholder="自動" /></td>
         <td><input type="number" class="t-rc" value="${preset.receipt_count || ""}" placeholder="0" /></td>
         <td><input type="text" class="t-summary" value="${preset.summary || ""}" placeholder="參加會議" /></td>
-        <td><button type="button" class="danger" onclick="this.closest('tr').remove()">刪</button></td>
+        <td style="white-space:nowrap;">
+          <button type="button" class="secondary" onclick="calcRowMileage(this)" style="padding:5px 8px; font-size:12px;">算里程</button>
+          <button type="button" class="danger" onclick="this.closest('tr').remove()" style="padding:5px 8px; font-size:12px;">刪</button>
+        </td>
       `;
       tbody.appendChild(tr);
+    }
+
+    async function calcSmartRouteToRow() {
+      const routeInput = document.getElementById("travelSmartRoute").value.trim();
+      const roundTrip = document.getElementById("travelRoundTrip").checked;
+      if (!routeInput) return showTravelStatus("請先輸入起訖地點（例如：土城高中 -> 教育局）", false);
+
+      const res = await fetch("/api/travel/calc-route", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ stops: routeInput, round_trip: roundTrip }),
+      });
+      const data = await res.json();
+      if (!data.ok) return showTravelStatus(data.error, false);
+
+      const rate = parseFloat(document.getElementById("travelCarRate").value || "3.25") || 3.25;
+      const estFare = Math.round(data.total_km * rate);
+      const srcLabel = data.source === "osrm" ? "實際道路距離" : "直線估算(×1.3)";
+      document.getElementById("travelSmartResult").textContent =
+        `✔ ${srcLabel}：總里程 ${data.total_km} km（單程約 ${data.one_way_km} km），自用車預估 ${estFare} 元｜${data.segments_text}`;
+
+      const rows = [...document.querySelectorAll("#travelDaysBody tr")];
+      let targetRow = rows.find(r => !r.querySelector(".t-route").value.trim());
+      if (!targetRow) {
+        addTravelDayRow();
+        targetRow = document.querySelector("#travelDaysBody tr:last-child");
+      }
+      targetRow.querySelector(".t-route").value = data.segments_text;
+      targetRow.querySelector(".t-km").value = data.one_way_km;
+      showTravelStatus("已將智慧計算里程填入出差行程表！");
+    }
+
+    async function calcRowMileage(btn) {
+      const tr = btn.closest("tr");
+      const rawRoute = tr.querySelector(".t-route").value.trim();
+      if (!rawRoute) return showTravelStatus("請先在該列輸入地點（例如：土城高中 -> 教育局 -> 土城高中）", false);
+      const res = await fetch("/api/travel/calc-route", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ stops: rawRoute, round_trip: false }),
+      });
+      const data = await res.json();
+      if (!data.ok) return showTravelStatus(data.error, false);
+      tr.querySelector(".t-route").value = data.segments_text;
+      tr.querySelector(".t-km").value = data.one_way_km;
+      showTravelStatus(`已更新該列里程：總計 ${data.total_km} km（單程 ${data.one_way_km} km）`);
     }
 
     function buildTravelPayload() {

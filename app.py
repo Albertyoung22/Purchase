@@ -35,6 +35,7 @@ from fill_purchase_forms import (
     sanitize_filename,
     split_requests_opt,
 )
+from travel_distance import calculate_route_mileage, parse_stops_text
 from travel_form_builder import (
     RouteSegment,
     TravelDayEntry,
@@ -815,6 +816,25 @@ def _travel_report_from_payload(payload: dict[str, Any]) -> TravelReport:
         days=days,
         rates=rates,
     )
+
+
+@app.post("/api/travel/calc-route")
+def api_travel_calc_route():
+    try:
+        payload = request.get_json(force=True)
+        raw_stops = payload.get("stops")
+        if isinstance(raw_stops, str):
+            stops = parse_stops_text(raw_stops)
+        elif isinstance(raw_stops, list):
+            stops = [str(s).strip() for s in raw_stops if str(s).strip()]
+        else:
+            stops = parse_stops_text(str(payload.get("route_text", "")))
+
+        round_trip = bool(payload.get("round_trip", False))
+        result = calculate_route_mileage(stops, round_trip=round_trip)
+        return jsonify({"ok": True, **result})
+    except Exception as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 400
 
 
 @app.post("/api/travel/preview")

@@ -500,6 +500,30 @@ class TestDesktopApp(unittest.TestCase):
                 pp_data = pp_res.get_json()
                 self.assertTrue(pp_data["ok"])
 
+    def test_travel_calc_route_api(self) -> None:
+        with patch("travel_distance._osrm_driving_legs", return_value=[14.5, 6.2, 18.3]):
+            res = self.client.post(
+                "/api/travel/calc-route",
+                json={"stops": "土城高中 -> 教育局 -> 南寧高中", "round_trip": True},
+            )
+            data = res.get_json()
+            self.assertTrue(data["ok"])
+            self.assertEqual(data["stops"], ["土城高中", "教育局", "南寧高中", "土城高中"])
+            self.assertEqual(data["total_km"], 39.0)
+            self.assertEqual(data["one_way_km"], 19.5)
+            self.assertIn("土城高中->教育局:14.5", data["segments_text"])
+
+        # Fallback when OSRM is unavailable
+        with patch("travel_distance._osrm_driving_legs", return_value=None):
+            res_fb = self.client.post(
+                "/api/travel/calc-route",
+                json={"stops": "土城高中 -> 臺南高商", "round_trip": True},
+            )
+            data_fb = res_fb.get_json()
+            self.assertTrue(data_fb["ok"])
+            self.assertEqual(data_fb["source"], "haversine_fallback")
+            self.assertGreater(data_fb["total_km"], 10.0)
+
 
 if __name__ == "__main__":
     unittest.main()
