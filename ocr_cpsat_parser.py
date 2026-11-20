@@ -7,7 +7,7 @@ from dataclasses import dataclass
 
 from ortools.sat.python import cp_model
 
-from invoice_parser import ParsedInvoice, ParsedInvoiceItem, parse_invoice_text, split_name_and_spec
+from invoice_parser import ParsedInvoice, ParsedInvoiceItem, split_name_and_spec
 
 
 @dataclass
@@ -24,7 +24,6 @@ class CandidateItem:
     has_tax_marker: bool = False
     arithmetic_ok: bool = False
     is_noise_hint: bool = False
-    from_structured_parser: bool = False
 
 
 _NOISE_WORDS = ("現金", "找零", "信用卡", "悠遊卡", "LINEPAY", "刷卡", "實付", "應付", "稅額", "免稅", "應稅")
@@ -33,7 +32,7 @@ _NOISE_WORDS = ("現金", "找零", "信用卡", "悠遊卡", "LINEPAY", "刷卡
 def extract_candidates_from_text(raw_text: str, parsed: ParsedInvoice) -> list[CandidateItem]:
     """Build CandidateItem list from parsed items and any extra numeric lines in raw_text."""
     candidates: list[CandidateItem] = []
-    seen_keys: set[tuple[str, float]] = set()
+    seen_names: set[str] = set()
 
     for it in parsed.items:
         arith_ok = (
@@ -53,10 +52,9 @@ def extract_candidates_from_text(raw_text: str, parsed: ParsedInvoice) -> list[C
                 has_tax_marker=f"{it.subtotal}TX" in raw_text.replace(" ", ""),
                 arithmetic_ok=arith_ok,
                 is_noise_hint=is_noise,
-                from_structured_parser=True,
             )
         )
-        seen_keys.add((it.name, float(it.subtotal)))
+        seen_names.add(it.name)
 
     # Also scan raw lines for fallback "name  amount" patterns that might be missed or payment lines
     line_num_re = re.compile(r"^(?P<name>[^\d\s].*?)\s+\$?(?P<amt>\d+(?:,\d{3})*(?:\.\d+)?)\s*(?P<tx>TX|T)?\s*$")
@@ -67,13 +65,9 @@ def extract_candidates_from_text(raw_text: str, parsed: ParsedInvoice) -> list[C
             continue
         raw_name = m.group("name").strip()
         name, spec = split_name_and_spec(raw_name)
-        amt = float(m.group("amt").replace(",", ""))
-        already_parsed = (name, amt) in seen_keys or any(
-            abs(p_amt - amt) < 0.01 and raw_name.startswith(p_name)
-            for p_name, p_amt in seen_keys
-        )
-        if already_parsed or any(k in raw_name for k in ("總計", "合計", "隨機碼", "統編", "統一編號", "日期")):
+        if name in seen_names or any(k in raw_name for k in ("總計", "合計", "隨機碼", "統編", "統一編號", "日期")):
             continue
+        amt = float(m.group("amt").replace(",", ""))
         amt_clean: int | float = int(amt) if amt.is_integer() else amt
         is_noise = any(nw in name.replace(" ", "").upper() for nw in _NOISE_WORDS)
         candidates.append(
@@ -88,7 +82,7 @@ def extract_candidates_from_text(raw_text: str, parsed: ParsedInvoice) -> list[C
                 is_noise_hint=is_noise,
             )
         )
-        seen_keys.add((name, amt))
+        seen_names.add(name)
 
     return candidates
 
@@ -121,8 +115,6 @@ def reconcile_items_with_cpsat(
     scores: list[int] = []
     for c in candidates:
         sc = 10
-        if c.from_structured_parser:
-            sc += 10
         if c.arithmetic_ok:
             sc += 20
         if c.has_tax_marker:
@@ -178,22 +170,4 @@ def reconcile_items_with_cpsat(
         exact_match = abs(sel_sum - detected_total) < 0.01
 
     return selected, exact_match
-
-
-def parse_raw_ocr_with_cpsat(
-    raw_text: str,
-    *,
-    detected_total: int | float | None = None,
-) -> tuple[ParsedInvoice, bool]:
-    """Parse raw OCR/PDF text into 7-column invoice items reconciled via OR-Tools CP-SAT."""
-    parsed = parse_invoice_text(raw_text)
-    target_total = detected_total if detected_total is not None else parsed.total_amount
-    candidates = extract_candidates_from_text(raw_text, parsed)
-    selected, exact_match = reconcile_items_with_cpsat(candidates, target_total)
-    if selected:
-        parsed.items = selected
-    if parsed.total_amount is None and parsed.items:
-        tot = sum(it.subtotal for it in parsed.items)
-        parsed.total_amount = int(tot) if float(tot).is_integer() else tot
-    return parsed, exact_match
 

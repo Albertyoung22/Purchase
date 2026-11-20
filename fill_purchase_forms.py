@@ -7,11 +7,13 @@ import csv
 import json
 import re
 from collections import defaultdict
+from copy import copy
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 import openpyxl
+from openpyxl.styles import Alignment
 from openpyxl.utils import column_index_from_string, get_column_letter
 from openpyxl.worksheet.worksheet import Worksheet
 
@@ -59,7 +61,6 @@ class PurchaseRequest:
     level2: str = ""
     level3: str = ""
     department: str = ""
-    school_name: str = ""
     request_date: str = ""
     payer_name: str = ""
     receipt_count: int | None = None
@@ -235,7 +236,6 @@ def _detect_sheet_layout(ws: Worksheet, cfg: dict[str, Any]) -> dict[str, Any]:
     lv1_coord: str | None = None
     lv2_coord: str | None = None
     lv3_coord: str | None = None
-    school_coord: str | None = None
 
     for row in ws.iter_rows(min_row=1, max_row=min(ws.max_row, 45), max_col=12):
         for cell in row:
@@ -243,9 +243,7 @@ def _detect_sheet_layout(ws: Worksheet, cfg: dict[str, Any]) -> dict[str, Any]:
             if not isinstance(val, str):
                 continue
             compact = val.replace(" ", "").replace("\u3000", "").strip()
-            if school_coord is None and cell.row > 1 and "採購申請單" in compact:
-                school_coord = f"A{cell.row - 1}"
-            elif unit_price_row is None and compact == "單價":
+            if unit_price_row is None and compact == "單價":
                 unit_price_row = cell.row
             elif total_row is None and compact == "合計":
                 total_row = cell.row
@@ -290,7 +288,6 @@ def _detect_sheet_layout(ws: Worksheet, cfg: dict[str, Any]) -> dict[str, Any]:
         "lv1_coord": lv1_coord,
         "lv2_coord": lv2_coord,
         "lv3_coord": lv3_coord,
-        "school_coord": school_coord,
     }
 
 
@@ -305,71 +302,6 @@ def _hide_instruction_row(ws: Worksheet) -> None:
         for col in range(1, ws.max_column + 1):
             ws.cell(1, col).fill = no_fill
         ws.row_dimensions[1].hidden = True
-
-
-def _normalize_vertical_alignments(ws: Worksheet) -> None:
-    """Ensure vertical CJK labels (e.g. 請購人, 處室主任, 代墊欄) are horizontally centered."""
-    from copy import copy
-
-    for row in ws.iter_rows(min_row=1, max_row=ws.max_row, min_col=1, max_col=10):
-        for cell in row:
-            if (
-                isinstance(cell.value, str)
-                and cell.alignment
-                and cell.alignment.textRotation == 255
-                and (cell.alignment.horizontal != "center" or cell.alignment.indent)
-            ):
-                new_align = copy(cell.alignment)
-                new_align.horizontal = "center"
-                new_align.indent = 0
-                cell.alignment = new_align
-
-
-def _normalize_budget_alignments(
-    ws: Worksheet,
-    layout: dict[str, Any],
-    cells: dict[str, Any],
-) -> None:
-    """Normalize alignment & indent in budget header cells so text never clips or skews."""
-    from copy import copy
-    from openpyxl.styles import Alignment
-
-    # Multi-row merged cells (計畫名稱, 一級用途別): centered with wrap
-    for key in ("plan_coord", "lv1_coord"):
-        coord = layout.get(key)
-        if not coord:
-            continue
-        cell = ws[coord]
-        al = copy(cell.alignment) if cell.alignment else Alignment()
-        al.horizontal = "center"
-        al.vertical = "center"
-        al.indent = 0
-        al.wrap_text = True
-        cell.alignment = al
-
-    # Single-row merged cells (二級用途別 F8, 三級用途別 F9): remove stray indent=3 & shrink-to-fit on 1 line
-    for key in ("lv2_coord", "lv3_coord"):
-        coord = layout.get(key)
-        if not coord:
-            continue
-        cell = ws[coord]
-        al = copy(cell.alignment) if cell.alignment else Alignment()
-        al.horizontal = "center"
-        al.vertical = "center"
-        al.indent = 0
-        al.wrap_text = False
-        al.shrink_to_fit = True
-        cell.alignment = al
-
-    # Budget code cell (H6): center cleanly in the yellow box
-    bc_coord = cells.get("budget_code")
-    if bc_coord:
-        cell = ws[bc_coord]
-        al = copy(cell.alignment) if cell.alignment else Alignment()
-        al.horizontal = "center"
-        al.vertical = "center"
-        al.indent = 0
-        cell.alignment = al
 
 
 def _configure_single_page_print(ws: Worksheet) -> None:
@@ -495,9 +427,6 @@ def fill_worksheet(ws: Worksheet, req: PurchaseRequest, cfg: dict[str, Any]) -> 
             _expand_item_rows(ws, start_row, old_total_row, extra)
             layout = _detect_sheet_layout(ws, cfg)
 
-    if req.school_name and layout.get("school_coord"):
-        safe_set_cell(ws, layout["school_coord"], req.school_name, overwrite_formula=True)
-
     if req.budget_code and cells.get("budget_code"):
         code_val: Any = int(req.budget_code) if req.budget_code.isdigit() else req.budget_code
         safe_set_cell(ws, cells["budget_code"], code_val)
@@ -575,8 +504,38 @@ def fill_worksheet(ws: Worksheet, req: PurchaseRequest, cfg: dict[str, Any]) -> 
         safe_set_cell(ws, layout["total_coord"], req.total_amount)
     if cells.get("header_amount"):
         safe_set_cell(ws, cells["header_amount"], req.total_amount)
-    _normalize_vertical_alignments(ws)
-    _normalize_budget_alignments(ws, layout, cells)
+
+    # Prevent '###' overflow on numeric cells in Excel & LibreOffice PDF export
+    def _enable_numeric_shrink_fit(coord: str) -> None:
+        if not coord:
+            return
+        target = resolve_top_left_coord(ws, coord)
+        cell = ws[target]
+        align = copy(cell.alignment) if cell.has_style and cell.alignment else Alignment()
+        align.wrapText = False
+        align.shrinkToFit = True
+        cell.alignment = align
+
+    for offset in range(len(req.items)):
+        r_num = start_row + offset
+        for col_key in ("quantity", "unit_price", "subtotal"):
+            c_let = cols.get(col_key)
+            if c_let:
+                _enable_numeric_shrink_fit(f"{c_let}{r_num}")
+    _enable_numeric_shrink_fit(layout["total_coord"])
+    _enable_numeric_shrink_fit(cells.get("header_amount", ""))
+
+    min_col_widths = {
+        cols.get("quantity", ""): 8.5,
+        cols.get("unit_price", ""): 11.5,
+        cols.get("subtotal", ""): 13.5,
+    }
+    for c_let, min_w in min_col_widths.items():
+        if c_let:
+            cur_w = ws.column_dimensions[c_let].width
+            if cur_w is None or cur_w < min_w:
+                ws.column_dimensions[c_let].width = min_w
+
     _configure_single_page_print(ws)
 
 
@@ -593,7 +552,6 @@ def invoices_to_requests(
     payer_name: str = "",
     purpose: str = "",
     max_rows: int = 7,
-    summarize_over_max: bool = True,
 ) -> list[PurchaseRequest]:
     """Convert ParsedInvoice objects into PurchaseRequest objects ready for Excel filling."""
     requests: list[PurchaseRequest] = []
@@ -601,7 +559,7 @@ def invoices_to_requests(
         req_id = inv.invoice_no or f"INV-{idx:03d}"
         req_purpose = purpose or (f"{inv.seller_name}採購" if inv.seller_name else "發票採購")
 
-        if summarize_over_max and len(inv.items) > max_rows and inv.total_amount is not None:
+        if len(inv.items) > max_rows and inv.total_amount is not None:
             seller_prefix = inv.seller_name or "發票"
             items = [
                 LineItem(
@@ -870,16 +828,9 @@ def generate_from_requests(
     max_rows = int(cfg["items_table"]["max_rows"])
     chunked_requests = chunk_requests_by_max_rows(requests, max_rows=max_rows)
     generated_files: list[Path] = []
-    used_stems: set[str] = set()
     for req in chunked_requests:
-        safe_id = sanitize_filename(req.request_id) or "REQ"
-        candidate_stem = safe_id
-        seq = 2
-        while candidate_stem in used_stems:
-            candidate_stem = f"{safe_id}_{seq}"
-            seq += 1
-        used_stems.add(candidate_stem)
-        out_path = output_dir / f"{candidate_stem}_採購申請單.xlsx"
+        safe_id = sanitize_filename(req.request_id)
+        out_path = output_dir / f"{safe_id}_採購申請單.xlsx"
         if template_path is None:
             build_purchase_form_xlsx(req, out_path)
         else:

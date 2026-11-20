@@ -60,43 +60,27 @@ def export_xlsx_to_pdf_with_excel(xlsx_path: Path, pdf_path: Path, timeout_sec: 
     """Use installed Microsoft Excel COM to export an .xlsx file to an exact print-layout PDF."""
     if os.name != "nt":
         return False
-    import base64
-
     xlsx_abs = str(xlsx_path.resolve()).replace("'", "''")
     pdf_abs = str(pdf_path.resolve()).replace("'", "''")
     pdf_path.parent.mkdir(parents=True, exist_ok=True)
 
     ps_script = (
-        "$ErrorActionPreference = 'Stop'; "
-        "function Invoke-Retry([scriptblock]$Action) { "
-        "for ($i = 0; $i -lt 12; $i++) { "
-        "try { return (& $Action) } catch { "
-        "if (($_.Exception.ToString() -match 'RPC_E_CALL_REJECTED|0x80010001') -and $i -lt 11) { Start-Sleep -Milliseconds 400; continue }; "
-        "throw "
-        "} } }; "
-        "$excel = $null; $wb = $null; $excelPid = $null; "
+        "$excel = $null; $wb = $null; "
         "try { "
-        "$beforePids = @(Get-Process -Name EXCEL -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Id); "
         "$excel = New-Object -ComObject Excel.Application; "
-        "$afterPids = @(Get-Process -Name EXCEL -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Id); "
-        "$newPids = @($afterPids | Where-Object { $beforePids -notcontains $_ }); "
-        "if ($newPids.Count -eq 1) { $excelPid = $newPids[0] }; "
         "$excel.Visible = $false; "
         "$excel.DisplayAlerts = $false; "
-        f"$wb = Invoke-Retry {{ $excel.Workbooks.Open('{xlsx_abs}') }}; "
-        "try { $wb.RefreshAll() } catch {}; "
-        f"Invoke-Retry {{ $wb.ExportAsFixedFormat(0, '{pdf_abs}') }}; "
+        f"$wb = $excel.Workbooks.Open('{xlsx_abs}'); "
+        "$wb.RefreshAll(); "
+        f"$wb.ExportAsFixedFormat(0, '{pdf_abs}'); "
         "} finally { "
-        "if ($wb -ne $null) { try { Invoke-Retry { $wb.Close($false) } } catch {}; try { [void][System.Runtime.InteropServices.Marshal]::ReleaseComObject($wb) } catch {} }; "
-        "if ($excel -ne $null) { try { Invoke-Retry { $excel.Quit() } } catch {}; try { [void][System.Runtime.InteropServices.Marshal]::ReleaseComObject($excel) } catch {} }; "
-        "[GC]::Collect(); [GC]::WaitForPendingFinalizers(); "
-        "if ($excelPid -ne $null) { Start-Sleep -Milliseconds 200; Stop-Process -Id $excelPid -Force -ErrorAction SilentlyContinue }; "
+        "if ($wb -ne $null) { $wb.Close($false) }; "
+        "if ($excel -ne $null) { $excel.Quit() }; "
         "}"
     )
-    encoded_cmd = base64.b64encode(ps_script.encode("utf-16-le")).decode("ascii")
 
     proc = subprocess.run(
-        ["powershell", "-NoProfile", "-NonInteractive", "-EncodedCommand", encoded_cmd],
+        ["powershell", "-NoProfile", "-NonInteractive", "-Command", ps_script],
         capture_output=True,
         text=True,
         timeout=timeout_sec,
@@ -174,46 +158,38 @@ def _eval_simple_formula(ws: openpyxl.worksheet.worksheet.Worksheet, val: object
 
 def render_xlsx_fallback_html(xlsx_path: Path) -> str:
     """Fallback HTML table preview if Microsoft Excel COM is not available (e.g. Render Linux)."""
-    import html
-
     wb = openpyxl.load_workbook(xlsx_path, data_only=False)
-    try:
-        ws = wb.active
+    ws = wb.active
 
-        merged_skip: set[tuple[int, int]] = set()
-        merged_span: dict[tuple[int, int], tuple[int, int]] = {}
-        for rng in ws.merged_cells.ranges:
-            merged_span[(rng.min_row, rng.min_col)] = (
-                rng.max_row - rng.min_row + 1,
-                rng.max_col - rng.min_col + 1,
-            )
-            for r in range(rng.min_row, rng.max_row + 1):
-                for c in range(rng.min_col, rng.max_col + 1):
-                    if (r, c) != (rng.min_row, rng.min_col):
-                        merged_skip.add((r, c))
+    merged_skip: set[tuple[int, int]] = set()
+    merged_span: dict[tuple[int, int], tuple[int, int]] = {}
+    for rng in ws.merged_cells.ranges:
+        merged_span[(rng.min_row, rng.min_col)] = (
+            rng.max_row - rng.min_row + 1,
+            rng.max_col - rng.min_col + 1,
+        )
+        for r in range(rng.min_row, rng.max_row + 1):
+            for c in range(rng.min_col, rng.max_col + 1):
+                if (r, c) != (rng.min_row, rng.min_col):
+                    merged_skip.add((r, c))
 
-        rows_html: list[str] = []
-        for r in range(1, min(ws.max_row, 40) + 1):
-            if ws.row_dimensions[r].hidden:
+    rows_html: list[str] = []
+    for r in range(1, min(ws.max_row, 40) + 1):
+        if ws.row_dimensions[r].hidden:
+            continue
+        cells_html: list[str] = []
+        for c in range(1, min(ws.max_column, 10) + 1):
+            if (r, c) in merged_skip:
                 continue
-            cells_html: list[str] = []
-            for c in range(1, min(ws.max_column, 10) + 1):
-                if (r, c) in merged_skip:
-                    continue
-                rs, cs = merged_span.get((r, c), (1, 1))
-                cell = ws.cell(r, c)
-                text = html.escape(_eval_simple_formula(ws, cell.value))
-                attrs = ""
-                if rs > 1:
-                    attrs += f' rowspan="{rs}"'
-                if cs > 1:
-                    attrs += f' colspan="{cs}"'
-                if cell.alignment and cell.alignment.textRotation == 255:
-                    attrs += ' style="writing-mode:vertical-rl; letter-spacing:2px; width:2.2em; white-space:nowrap; vertical-align:top;"'
-                cells_html.append(f"<td{attrs}>{text}</td>")
-            rows_html.append("<tr>" + "".join(cells_html) + "</tr>")
+            rs, cs = merged_span.get((r, c), (1, 1))
+            text = _eval_simple_formula(ws, ws.cell(r, c).value)
+            attrs = ""
+            if rs > 1:
+                attrs += f' rowspan="{rs}"'
+            if cs > 1:
+                attrs += f' colspan="{cs}"'
+            cells_html.append(f"<td{attrs}>{text}</td>")
+        rows_html.append("<tr>" + "".join(cells_html) + "</tr>")
 
-        return f'<table class="excel-fallback">{"".join(rows_html)}</table>'
-    finally:
-        wb.close()
+    return f'<table class="excel-fallback">{"".join(rows_html)}</table>'
 

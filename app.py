@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import Any
 
 import openpyxl
-from flask import Flask, jsonify, render_template, request, send_file
+from flask import Flask, jsonify, render_template, request, send_file, session
 from waitress import serve
 
 from fill_purchase_forms import (
@@ -37,15 +37,13 @@ from fill_purchase_forms import (
 from form_builder import BUDGET_CODE_MAP
 from history_store import (
     append_history,
-    build_history_entries,
     clear_history,
     delete_history_record,
     export_history_csv_bytes,
     load_history,
     summarize_history,
 )
-from invoice_parser import ParsedInvoice, parse_einvoice_csv, parse_invoice_text
-from ocr_cpsat_parser import parse_raw_ocr_with_cpsat
+from invoice_parser import parse_einvoice_csv, parse_invoice_text
 from ocr_scanner import scan_document
 from print_preview import (
     export_xlsx_to_pdf,
@@ -65,16 +63,30 @@ app = Flask(
     static_folder=str(BASE_DIR / "static"),
 )
 app.config["MAX_CONTENT_LENGTH"] = 16 * 1024 * 1024  # 16 MB
+app.secret_key = os.environ.get("FLASK_SECRET_KEY") or os.urandom(24)
+
+_SID_RE = re.compile(r"^[a-f0-9]{16}$")
+_PREVIEW_TTL_SEC = 1800
 
 
-_BUDGET_OPTIONS_CACHE: dict[str, Any] = {"key": None, "data": None}
-
-
-def _is_cloud_mode() -> bool:
-    return bool(os.environ.get("RENDER") or os.environ.get("PORT"))
+def _get_session_upload_dir(*, create: bool = False) -> Path:
+    """Return an isolated upload directory for the current browser session."""
+    sid = session.get("sid", "")
+    if not isinstance(sid, str) or not _SID_RE.match(sid):
+        if not create:
+            return UPLOAD_DIR
+        sid = uuid.uuid4().hex[:16]
+        session["sid"] = sid
+    target = UPLOAD_DIR / sid
+    if create:
+        target.mkdir(parents=True, exist_ok=True)
+    return target
 
 
 def _active_template_path() -> Path | None:
+    session_tpl = _get_session_upload_dir(create=False) / "template.xlsx"
+    if session_tpl.exists():
+        return session_tpl
     uploaded = UPLOAD_DIR / "template.xlsx"
     if uploaded.exists():
         return uploaded
@@ -86,11 +98,6 @@ def _active_template_path() -> Path | None:
 
 def _collect_budget_options() -> dict[str, Any]:
     """Collect budget code mappings & dropdown options from every worksheet in the template."""
-    tpl = _active_template_path()
-    cache_key = (str(tpl.resolve()), tpl.stat().st_mtime_ns) if tpl and tpl.exists() else None
-    if _BUDGET_OPTIONS_CACHE["key"] == cache_key and _BUDGET_OPTIONS_CACHE["data"] is not None:
-        return _BUDGET_OPTIONS_CACHE["data"]
-
     entries: dict[str, dict[str, str]] = {}
     for code, (plan, lv1, lv2, lv3) in BUDGET_CODE_MAP.items():
         entries[code] = {
@@ -111,6 +118,7 @@ def _collect_budget_options() -> dict[str, Any]:
 
     payer_re = re.compile(r"由\(簽章\)\s*(\S+?)\s*代墊")
 
+    tpl = _active_template_path()
     if tpl and tpl.exists():
         try:
             wb = openpyxl.load_workbook(tpl, data_only=True, read_only=True)
@@ -212,7 +220,7 @@ def _collect_budget_options() -> dict[str, Any]:
                 seen.append(v)
         return seen
 
-    result = {
+    return {
         "entries": ordered,
         "plan_names": _uniq([e["plan_name"] for e in ordered] + extra_plans),
         "level1_options": _uniq([e["level1"] for e in ordered] + extra_lv1),
@@ -222,9 +230,6 @@ def _collect_budget_options() -> dict[str, Any]:
         "payers": _uniq(extra_payers),
         "purposes": _uniq(extra_purposes),
     }
-    _BUDGET_OPTIONS_CACHE["key"] = cache_key
-    _BUDGET_OPTIONS_CACHE["data"] = result
-    return result
 
 
 def _requests_from_payload(payload: dict[str, Any], cfg: dict[str, Any]) -> list[PurchaseRequest]:
@@ -265,7 +270,6 @@ def _requests_from_payload(payload: dict[str, Any], cfg: dict[str, Any]) -> list
             payer_name=payer_name,
             purpose=purpose,
             max_rows=max_rows,
-            summarize_over_max=not bool(payload.get("auto_split")),
         )
         if request_date:
             reqs[0].request_date = request_date
@@ -316,7 +320,9 @@ def _requests_from_payload(payload: dict[str, Any], cfg: dict[str, Any]) -> list
 
     if mode == "csv":
         csv_kind = payload.get("csv_kind", "standard")
-        uploaded_csv = UPLOAD_DIR / "input.csv"
+        uploaded_csv = _get_session_upload_dir(create=False) / "input.csv"
+        if not uploaded_csv.exists():
+            uploaded_csv = UPLOAD_DIR / "input.csv"
         if not uploaded_csv.exists():
             raise ValueError("請先上傳 CSV 檔案")
         if csv_kind == "einvoice":
@@ -331,7 +337,6 @@ def _requests_from_payload(payload: dict[str, Any], cfg: dict[str, Any]) -> list
                     payer_name=payer_name,
                     purpose=purpose,
                     max_rows=max_rows,
-                    summarize_over_max=not bool(payload.get("auto_split")),
                 )
             )
         return _apply_budget_fields(read_requests_csv(uploaded_csv))
@@ -380,7 +385,7 @@ def index() -> str:
         has_template=tpl is not None,
         template_name=tpl.name if tpl else "",
         sample_invoice=sample_inv,
-        is_cloud=_is_cloud_mode(),
+        is_cloud=bool(os.environ.get("RENDER") or os.environ.get("PORT")),
     )
 
 
@@ -396,8 +401,7 @@ def upload_template():
         return jsonify({"ok": False, "error": "請選擇 .xlsx 範本檔案"}), 400
     if not file.filename.lower().endswith(".xlsx"):
         return jsonify({"ok": False, "error": "僅支援 .xlsx 格式，若為 .xls 請先用 Excel 另存為 .xlsx"}), 400
-    UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
-    dest = UPLOAD_DIR / "template.xlsx"
+    dest = _get_session_upload_dir(create=True) / "template.xlsx"
     file.save(dest)
     return jsonify({"ok": True, "filename": file.filename})
 
@@ -407,8 +411,7 @@ def upload_csv():
     file = request.files.get("file")
     if not file or not file.filename:
         return jsonify({"ok": False, "error": "請選擇 CSV 檔案"}), 400
-    UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
-    dest = UPLOAD_DIR / "input.csv"
+    dest = _get_session_upload_dir(create=True) / "input.csv"
     file.save(dest)
     return jsonify({"ok": True, "filename": file.filename})
 
@@ -419,40 +422,32 @@ def api_inspect_template():
     if not tpl:
         return jsonify({"ok": False, "error": "尚未上傳或放置 template.xlsx 範本檔"}), 400
     wb = openpyxl.load_workbook(tpl, data_only=False)
-    try:
-        keywords = ("憑證", "預算", "代墊", "請購日期", "名", "合計", "用途")
-        sheets = []
-        for name in wb.sheetnames:
-            ws = wb[name]
-            labels = []
-            formulas = []
-            for row in ws.iter_rows(min_row=1, max_row=min(ws.max_row, 50), max_col=min(ws.max_column, 15)):
-                for cell in row:
-                    val = cell.value
-                    if isinstance(val, str):
-                        if val.startswith("="):
-                            formulas.append(f"{cell.coordinate}: {val}")
-                        elif any(kw in val.replace(" ", "") for kw in keywords):
-                            labels.append(f"{cell.coordinate}: {val.strip()[:28]}")
-            sheets.append({
-                "name": name,
-                "rows": ws.max_row,
-                "cols": ws.max_column,
-                "labels": labels[:15],
-                "formulas": formulas[:12],
-            })
-        return jsonify({"ok": True, "template": tpl.name, "sheets": sheets})
-    finally:
-        wb.close()
+    keywords = ("憑證", "預算", "代墊", "請購日期", "名", "合計", "用途")
+    sheets = []
+    for name in wb.sheetnames:
+        ws = wb[name]
+        labels = []
+        formulas = []
+        for row in ws.iter_rows(min_row=1, max_row=min(ws.max_row, 50), max_col=min(ws.max_column, 15)):
+            for cell in row:
+                val = cell.value
+                if isinstance(val, str):
+                    if val.startswith("="):
+                        formulas.append(f"{cell.coordinate}: {val}")
+                    elif any(kw in val.replace(" ", "") for kw in keywords):
+                        labels.append(f"{cell.coordinate}: {val.strip()[:28]}")
+        sheets.append({
+            "name": name,
+            "rows": ws.max_row,
+            "cols": ws.max_column,
+            "labels": labels[:15],
+            "formulas": formulas[:12],
+        })
+    return jsonify({"ok": True, "template": tpl.name, "sheets": sheets})
 
 
 @app.post("/api/save-config")
 def api_save_config():
-    if _is_cloud_mode():
-        return jsonify({
-            "ok": False,
-            "error": "雲端模式下不修改伺服器共用設定，請於瀏覽器本機儲存個人設定。",
-        }), 403
     try:
         data = request.get_json(force=True)
         parsed = json.loads(data["config_text"])
@@ -512,100 +507,48 @@ def api_scan_image():
         return jsonify({"ok": False, "error": f"影像掃描失敗：{exc}"}), 400
 
 
-def _serialize_parsed_invoice(inv: ParsedInvoice) -> dict[str, Any]:
-    return {
-        "invoice_no": inv.invoice_no,
-        "roc_date": inv.roc_date,
-        "seller_name": inv.seller_name,
-        "total_amount": inv.total_amount,
-        "items": [
-            {
-                "name": it.name,
-                "spec": it.spec,
-                "unit": it.unit,
-                "quantity": it.quantity,
-                "unit_price": it.unit_price,
-                "subtotal": it.subtotal,
-                "note": it.note,
-            }
-            for it in inv.items
-        ],
-    }
-
-
 @app.post("/api/parse-invoice-text")
 def api_parse_invoice_text():
     try:
         data = request.get_json(force=True)
         inv = parse_invoice_text(data.get("text", ""))
-        return jsonify({"ok": True, "invoice": _serialize_parsed_invoice(inv)})
-    except Exception as exc:
-        return jsonify({"ok": False, "error": str(exc)}), 400
-
-
-@app.post("/api/parse-raw-ocr-cpsat")
-def api_parse_raw_ocr_cpsat():
-    try:
-        data = request.get_json(force=True)
-        raw_text = str(data.get("raw_text", "")).strip()
-        if not raw_text:
-            raise ValueError("請提供原始 OCR / PDF 文字")
-        total_raw = data.get("total_amount")
-        detected_total = parse_number(str(total_raw)) if total_raw not in (None, "") else None
-
-        inv, verified = parse_raw_ocr_with_cpsat(raw_text, detected_total=detected_total)
-        cfg = load_config(CONFIG_PATH)
-        threshold = int(cfg.get("under_3000_threshold", 3000))
-        rec_sheet = (
-            cfg.get("under_3000_sheet", "請購單簡化流程-3000元以下適用")
-            if inv.total_amount is not None and inv.total_amount < threshold
-            else cfg.get("default_sheet", "請購單-3000元以上一定要用此表")
-        )
         return jsonify({
             "ok": True,
-            "engine": "cpsat-raw-parser",
-            "cpsat_verified": verified,
-            "recommended_sheet": rec_sheet,
-            "raw_text": raw_text,
-            "invoice": _serialize_parsed_invoice(inv),
+            "invoice": {
+                "invoice_no": inv.invoice_no,
+                "roc_date": inv.roc_date,
+                "seller_name": inv.seller_name,
+                "total_amount": inv.total_amount,
+                "items": [
+                    {
+                        "name": it.name,
+                        "spec": it.spec,
+                        "unit": it.unit,
+                        "quantity": it.quantity,
+                        "unit_price": it.unit_price,
+                        "subtotal": it.subtotal,
+                        "note": it.note,
+                    }
+                    for it in inv.items
+                ],
+            },
         })
     except Exception as exc:
         return jsonify({"ok": False, "error": str(exc)}), 400
-
-
-def _prepare_requests_from_payload(payload: dict[str, Any], cfg: dict[str, Any]) -> list[PurchaseRequest]:
-    """Build and split/chunk PurchaseRequest list according to payload options."""
-    reqs = _requests_from_payload(payload, cfg)
-    max_rows = int(cfg["items_table"]["max_rows"])
-    if payload.get("auto_split"):
-        max_amount = float(payload.get("max_amount") or 3000)
-        result = split_requests_opt(reqs, max_amount=max_amount, max_rows=max_rows)
-    else:
-        result = chunk_requests_by_max_rows(reqs, max_rows=max_rows)
-    school_name = str(payload.get("school_name") or "").strip()
-    if school_name:
-        for req in result:
-            req.school_name = school_name
-    return result
-
-
-def _resolve_request_config(payload: dict[str, Any]) -> dict[str, Any]:
-    """Load base config.json and apply optional per-user custom_config override from browser."""
-    cfg = load_config(CONFIG_PATH)
-    custom = payload.get("custom_config")
-    if isinstance(custom, dict):
-        merged = dict(cfg)
-        merged.update(custom)
-        return merged
-    return cfg
 
 
 @app.post("/api/preview")
 def api_preview():
     try:
         payload = request.get_json(force=True)
-        cfg = _resolve_request_config(payload)
-        reqs = _prepare_requests_from_payload(payload, cfg)
+        cfg = load_config(CONFIG_PATH)
+        reqs = _requests_from_payload(payload, cfg)
+        max_rows = int(cfg["items_table"]["max_rows"])
+        if payload.get("auto_split"):
+            max_amount = float(payload.get("max_amount") or 3000)
+            reqs = split_requests_opt(reqs, max_amount=max_amount, max_rows=max_rows)
+        else:
+            reqs = chunk_requests_by_max_rows(reqs, max_rows=max_rows)
         return jsonify({"ok": True, "requests": _serialize_requests(reqs)})
     except Exception as exc:
         return jsonify({"ok": False, "error": str(exc)}), 400
@@ -616,31 +559,32 @@ def api_generate():
     try:
         tpl = _active_template_path()
         payload = request.get_json(force=True)
-        cfg = _resolve_request_config(payload)
-        reqs = _prepare_requests_from_payload(payload, cfg)
+        cfg = load_config(CONFIG_PATH)
+        reqs = _requests_from_payload(payload, cfg)
+        max_rows = int(cfg["items_table"]["max_rows"])
+        if payload.get("auto_split"):
+            max_amount = float(payload.get("max_amount") or 3000)
+            reqs = split_requests_opt(reqs, max_amount=max_amount, max_rows=max_rows)
+        else:
+            reqs = chunk_requests_by_max_rows(reqs, max_rows=max_rows)
 
         files = generate_from_requests(tpl, reqs, OUTPUT_DIR, cfg)
-        if _is_cloud_mode():
-            # In multi-user cloud mode, keep history strictly on the user's own browser (localStorage).
-            history_entries = build_history_entries(reqs, files)
-        else:
-            history_entries = append_history(HISTORY_PATH, reqs, files)
+        append_history(HISTORY_PATH, reqs, files)
         return jsonify({
             "ok": True,
             "files": [f.name for f in files],
             "requests": _serialize_requests(reqs),
-            "history_entries": history_entries,
         })
     except Exception as exc:
         return jsonify({"ok": False, "error": str(exc)}), 400
 
 
-def _cleanup_old_previews(preview_dir: Path, max_age_sec: int = 3600) -> None:
-    """Best-effort cleanup of old preview artifacts without failing on locked files."""
-    if not preview_dir.exists():
+def _cleanup_old_previews(preview_root: Path, max_age_sec: int = _PREVIEW_TTL_SEC) -> None:
+    """Remove expired temporary preview files and subdirectories."""
+    if not preview_root.exists():
         return
     cutoff = time.time() - max_age_sec
-    for entry in preview_dir.iterdir():
+    for entry in preview_root.iterdir():
         try:
             if entry.stat().st_mtime < cutoff:
                 if entry.is_dir():
@@ -651,10 +595,10 @@ def _cleanup_old_previews(preview_dir: Path, max_age_sec: int = 3600) -> None:
             pass
 
 
-@app.get("/api/preview-file/<path:filename>")
-def api_preview_file(filename: str):
+@app.get("/api/preview-file/<path:subpath>")
+def api_preview_file(subpath: str):
     preview_root = (OUTPUT_DIR / "_preview").resolve()
-    target = (preview_root / filename).resolve()
+    target = (preview_root / subpath).resolve()
     if not target.is_relative_to(preview_root) or not target.is_file():
         return jsonify({"ok": False, "error": "找不到預覽檔案"}), 404
     if target.suffix.lower() == ".pdf":
@@ -667,28 +611,31 @@ def api_print_preview():
     try:
         tpl = _active_template_path()
         payload = request.get_json(force=True)
-        cfg = _resolve_request_config(payload)
-        reqs = _prepare_requests_from_payload(payload, cfg)
+        cfg = load_config(CONFIG_PATH)
+        reqs = _requests_from_payload(payload, cfg)
+        max_rows = int(cfg["items_table"]["max_rows"])
+        if payload.get("auto_split"):
+            max_amount = float(payload.get("max_amount") or 3000)
+            reqs = split_requests_opt(reqs, max_amount=max_amount, max_rows=max_rows)
+        else:
+            reqs = chunk_requests_by_max_rows(reqs, max_rows=max_rows)
 
-        preview_dir = OUTPUT_DIR / "_preview"
+        preview_root = OUTPUT_DIR / "_preview"
+        _cleanup_old_previews(preview_root)
+        preview_id = uuid.uuid4().hex[:12]
+        preview_dir = preview_root / preview_id
         preview_dir.mkdir(parents=True, exist_ok=True)
-        _cleanup_old_previews(preview_dir)
-
-        run_id = uuid.uuid4().hex[:10]
-        run_dir = preview_dir / run_id
-        run_dir.mkdir(parents=True, exist_ok=True)
-
-        files = generate_from_requests(tpl, reqs, run_dir, cfg)
+        files = generate_from_requests(tpl, reqs, preview_dir, cfg)
         first_xlsx = files[0]
-        pdf_path = run_dir / f"{first_xlsx.stem}.pdf"
+        pdf_path = preview_dir / f"{first_xlsx.stem}.pdf"
 
         if export_xlsx_to_pdf(first_xlsx, pdf_path):
-            pngs = render_pdf_to_pngs(pdf_path, run_dir, prefix=first_xlsx.stem)
+            pngs = render_pdf_to_pngs(pdf_path, preview_dir, prefix=first_xlsx.stem)
             return jsonify({
                 "ok": True,
                 "mode": "excel_pdf",
-                "pdf_url": f"/api/preview-file/{run_id}/{pdf_path.name}",
-                "page_urls": [f"/api/preview-file/{run_id}/{p.name}" for p in pngs],
+                "pdf_url": f"/api/preview-file/{preview_id}/{pdf_path.name}",
+                "page_urls": [f"/api/preview-file/{preview_id}/{p.name}" for p in pngs],
                 "total_forms": len(files),
             })
 
@@ -731,13 +678,6 @@ def api_sample_csv():
 
 @app.get("/api/history")
 def api_get_history():
-    if _is_cloud_mode():
-        return jsonify({
-            "ok": True,
-            "cloud_local_only": True,
-            "records": [],
-            "summary": summarize_history([]),
-        })
     records = load_history(HISTORY_PATH)
     return jsonify({
         "ok": True,
@@ -748,8 +688,6 @@ def api_get_history():
 
 @app.delete("/api/history/<record_id>")
 def api_delete_history(record_id: str):
-    if _is_cloud_mode():
-        return jsonify({"ok": True, "cloud_local_only": True, "records": [], "summary": summarize_history([])})
     deleted = delete_history_record(HISTORY_PATH, record_id)
     if not deleted:
         return jsonify({"ok": False, "error": "找不到該筆紀錄"}), 404
@@ -759,15 +697,13 @@ def api_delete_history(record_id: str):
 
 @app.post("/api/history/clear")
 def api_clear_history():
-    if _is_cloud_mode():
-        return jsonify({"ok": True, "cloud_local_only": True, "records": [], "summary": summarize_history([])})
     clear_history(HISTORY_PATH)
     return jsonify({"ok": True, "records": [], "summary": summarize_history([])})
 
 
 @app.get("/api/history/export")
 def api_export_history():
-    records = [] if _is_cloud_mode() else load_history(HISTORY_PATH)
+    records = load_history(HISTORY_PATH)
     csv_bytes = export_history_csv_bytes(records)
     return send_file(
         io.BytesIO(csv_bytes),
@@ -779,8 +715,6 @@ def api_export_history():
 
 @app.post("/api/open-output")
 def api_open_output():
-    if _is_cloud_mode():
-        return jsonify({"ok": False, "error": "雲端模式下無法開啟本機資料夾"}), 403
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     if os.name == "nt":
         os.startfile(str(OUTPUT_DIR))  # type: ignore[attr-defined]
@@ -789,8 +723,6 @@ def api_open_output():
 
 @app.post("/api/shutdown")
 def api_shutdown():
-    if _is_cloud_mode():
-        return jsonify({"ok": False, "error": "雲端模式下不允許遠端關閉伺服器"}), 403
     threading.Timer(0.3, lambda: os._exit(0)).start()
     return jsonify({"ok": True})
 

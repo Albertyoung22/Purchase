@@ -447,58 +447,37 @@ class TestFillPurchaseForms(unittest.TestCase):
             self.assertEqual(wb2.active["A18"].value, "文具品項13")
             self.assertEqual(wb2.active["A19"].value, "文具品項14")
 
-    def test_duplicate_request_ids_generate_distinct_filenames(self) -> None:
-        cfg = load_config(Path("config.json"))
-        reqs = [
-            PurchaseRequest(
-                request_id="DUP-001",
-                budget_code="321",
-                department="總務處",
-                items=[LineItem(name="品項A", unit="個", quantity=1, unit_price=100)],
-            ),
-            PurchaseRequest(
-                request_id="DUP-001",
-                budget_code="321",
-                department="總務處",
-                items=[LineItem(name="品項B", unit="個", quantity=1, unit_price=200)],
-            ),
-        ]
-        with tempfile.TemporaryDirectory() as tmp:
-            out_dir = Path(tmp) / "output"
-            files = generate_from_requests(None, reqs, out_dir, cfg)
-            self.assertEqual(len(files), 2)
-            self.assertEqual(files[0].name, "DUP-001_採購申請單.xlsx")
-            self.assertEqual(files[1].name, "DUP-001_2_採購申請單.xlsx")
-            self.assertTrue(files[0].exists())
-            self.assertTrue(files[1].exists())
-
-    def test_real_template_normalizes_vertical_and_budget_alignments(self) -> None:
+    def test_numeric_cells_prevent_hash_overflow(self) -> None:
         base_dir = Path(__file__).parent
         cfg = load_config(base_dir / "config.json")
-        req = PurchaseRequest(
-            request_id="ALIGN-001",
-            budget_code="321",
-            department="總務處",
-            purpose="對齊測試",
-            items=[LineItem(name="文具", unit="批", quantity=1, unit_price=5850)],
-        )
         with tempfile.TemporaryDirectory() as tmp:
-            files = generate_from_requests(base_dir / "template.xlsx", [req], Path(tmp), cfg)
-            ws = openpyxl.load_workbook(files[0]).active
-            # 請購人 & 處室主任 both horizontally centered
-            self.assertEqual(ws["A33"].alignment.horizontal, "center")
-            self.assertEqual(ws["A38"].alignment.horizontal, "center")
-            # 二、三級用途別: no stray indent=3, centered, shrink_to_fit without clipping wrap
-            for coord in ("F8", "F9"):
-                self.assertEqual(ws[coord].alignment.horizontal, "center")
-                self.assertEqual(ws[coord].alignment.vertical, "center")
-                self.assertEqual(ws[coord].alignment.indent, 0)
-                self.assertFalse(ws[coord].alignment.wrap_text)
-                self.assertTrue(ws[coord].alignment.shrink_to_fit)
-            # 計畫名稱 & 一級用途別 & 預算科目代碼
-            self.assertEqual(ws["B8"].alignment.horizontal, "center")
-            self.assertEqual(ws["C8"].alignment.horizontal, "center")
-            self.assertEqual(ws["H6"].alignment.horizontal, "center")
+            tmp_dir = Path(tmp)
+            tpl_path = tmp_dir / "narrow.xlsx"
+            out_dir = tmp_dir / "output"
+            build_mock_template(tpl_path)
+
+            wb = openpyxl.load_workbook(tpl_path)
+            ws = wb.active
+            ws.column_dimensions["F"].width = 5.0
+            ws.column_dimensions["G"].width = 6.0
+            ws.column_dimensions["H"].width = 7.0
+            wb.save(tpl_path)
+
+            req = PurchaseRequest(
+                request_id="NUM-FIT",
+                budget_code="321",
+                department="總務處",
+                purpose="大額測試",
+                items=[LineItem(name="投影機", unit="台", quantity=2, unit_price=12500)],
+            )
+            files = generate_from_requests(tpl_path, [req], out_dir, cfg)
+            out_ws = openpyxl.load_workbook(files[0]).active
+            self.assertGreaterEqual(out_ws.column_dimensions["F"].width, 8.5)
+            self.assertGreaterEqual(out_ws.column_dimensions["G"].width, 11.5)
+            self.assertGreaterEqual(out_ws.column_dimensions["H"].width, 13.5)
+            for coord in ("F19", "G19", "H19", "H26", "I8"):
+                self.assertTrue(out_ws[coord].alignment.shrinkToFit)
+                self.assertFalse(out_ws[coord].alignment.wrapText)
 
 
 if __name__ == "__main__":

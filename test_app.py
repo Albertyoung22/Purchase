@@ -1,7 +1,6 @@
 """Integration tests for the Flask + Waitress desktop app."""
 
 import io
-import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -395,164 +394,71 @@ class TestDesktopApp(unittest.TestCase):
                 clr_res = self.client.post("/api/history/clear")
                 self.assertEqual(clr_res.get_json()["summary"]["total_count"], 0)
 
-    def test_cloud_mode_blocks_shutdown_and_open_output(self) -> None:
-        with patch.dict(os.environ, {"PORT": "8080"}):
-            res_shutdown = self.client.post("/api/shutdown")
-            self.assertEqual(res_shutdown.status_code, 403)
-            self.assertFalse(res_shutdown.get_json()["ok"])
-
-            res_open = self.client.post("/api/open-output")
-            self.assertEqual(res_open.status_code, 403)
-            self.assertFalse(res_open.get_json()["ok"])
-
-            res_cfg = self.client.post("/api/save-config", json={"config_text": "{}"})
-            self.assertEqual(res_cfg.status_code, 403)
-            self.assertFalse(res_cfg.get_json()["ok"])
-
-    def test_cloud_mode_isolates_history_and_prefs_to_browser(self) -> None:
+    def test_session_upload_isolation_and_preview_security(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             tmp_dir = Path(tmp)
+            upload_dir = tmp_dir / "uploads"
             out_dir = tmp_dir / "output"
-            hist_path = tmp_dir / "history.json"
+            preview_root = out_dir / "_preview"
+            stale_dir = preview_root / "stale123"
+            stale_dir.mkdir(parents=True, exist_ok=True)
+            stale_file = stale_dir / "old.png"
+            stale_file.write_bytes(b"old")
+            import os
+            old_ts = stale_dir.stat().st_mtime - 3600
+            os.utime(stale_dir, (old_ts, old_ts))
+
+            web_app._cleanup_old_previews(preview_root, max_age_sec=1800)
+            self.assertFalse(stale_dir.exists())
+
             with (
-                patch.dict(os.environ, {"PORT": "8080"}),
-                patch.object(web_app, "_active_template_path", return_value=None),
+                patch.object(web_app, "UPLOAD_DIR", upload_dir),
                 patch.object(web_app, "OUTPUT_DIR", out_dir),
-                patch.object(web_app, "HISTORY_PATH", hist_path),
             ):
-                # Index page exposes IS_CLOUD = true & localStorage persistence
-                idx_html = self.client.get("/").get_data(as_text=True)
-                self.assertIn("const IS_CLOUD = true;", idx_html)
-                self.assertIn("purchase_user_prefs_v1", idx_html)
-                self.assertIn("purchase_history_v1", idx_html)
+                c1 = web_app.app.test_client()
+                c2 = web_app.app.test_client()
 
-                # Generating in cloud mode returns history_entries for client localStorage,
-                # and MUST NOT write server-side history.json
-                gen_res = self.client.post(
-                    "/api/generate",
-                    json={
-                        "mode": "manual",
-                        "budget_code": "321",
-                        "department": "教務處",
-                        "payer_name": "王小明",
-                        "purpose": "雲端個人測試",
-                        "items": [{"name": "白板筆", "quantity": 3, "unit_price": 40}],
-                    },
-                )
-                gen_data = gen_res.get_json()
-                self.assertTrue(gen_data["ok"])
-                self.assertEqual(len(gen_data["history_entries"]), 1)
-                self.assertEqual(gen_data["history_entries"][0]["payer_name"], "王小明")
-                self.assertFalse(hist_path.exists())
+                c1.post("/api/upload-csv", data={"file": (io.BytesIO(b"a,b\n1,2\n"), "a.csv")}, content_type="multipart/form-data")
+                c2.post("/api/upload-csv", data={"file": (io.BytesIO(b"a,b\n3,4\n"), "b.csv")}, content_type="multipart/form-data")
 
-                # /api/history in cloud mode never returns shared server records
-                h_data = self.client.get("/api/history").get_json()
-                self.assertTrue(h_data["ok"])
-                self.assertTrue(h_data["cloud_local_only"])
-                self.assertEqual(h_data["records"], [])
+                subdirs = [p for p in upload_dir.iterdir() if p.is_dir()]
+                self.assertEqual(len(subdirs), 2)
+                contents = sorted((p / "input.csv").read_text(encoding="utf-8") for p in subdirs)
+                self.assertEqual(contents, ["a,b\n1,2\n", "a,b\n3,4\n"])
 
-    def test_custom_school_name_overrides_template_and_standalone_header(self) -> None:
-        import openpyxl
+                bad_res = c1.get("/api/preview-file/../../app.py")
+                self.assertEqual(bad_res.status_code, 404)
+                bad_res.close()
 
+    def test_gemini_api_key_sent_in_header_not_url(self) -> None:
+        from unittest.mock import MagicMock
+        import ocr_scanner
+
+        img = Image.new("RGB", (60, 40), "white")
         with tempfile.TemporaryDirectory() as tmp:
-            tmp_dir = Path(tmp)
-            out_dir = tmp_dir / "output"
-            # 1. With real template.xlsx (A2)
-            with (
-                patch.object(web_app, "_active_template_path", return_value=Path("template.xlsx")),
-                patch.object(web_app, "OUTPUT_DIR", out_dir),
-                patch.object(web_app, "HISTORY_PATH", tmp_dir / "history.json"),
-            ):
-                res = self.client.post(
-                    "/api/generate",
-                    json={
-                        "mode": "manual",
-                        "school_name": "臺南市立安南國民中學",
-                        "budget_code": "321",
-                        "department": "教務處",
-                        "purpose": "校名測試",
-                        "items": [{"name": "粉筆", "quantity": 2, "unit_price": 50}],
-                    },
-                )
-                data = res.get_json()
-                self.assertTrue(data["ok"])
-                wb = openpyxl.load_workbook(out_dir / data["files"][0], data_only=False)
-                self.assertEqual(wb.active["A2"].value, "臺南市立安南國民中學")
+            img_path = Path(tmp) / "inv.png"
+            img.save(img_path)
 
-            # 2. Standalone (no template, A1)
-            out_dir2 = tmp_dir / "output2"
-            with (
-                patch.object(web_app, "_active_template_path", return_value=None),
-                patch.object(web_app, "OUTPUT_DIR", out_dir2),
-                patch.object(web_app, "HISTORY_PATH", tmp_dir / "history2.json"),
-            ):
-                res2 = self.client.post(
-                    "/api/generate",
-                    json={
-                        "mode": "manual",
-                        "school_name": "高雄市立鳳山高級中學",
-                        "budget_code": "321",
-                        "department": "總務處",
-                        "items": [{"name": "資料夾", "quantity": 1, "unit_price": 100}],
-                    },
-                )
-                data2 = res2.get_json()
-                self.assertTrue(data2["ok"])
-                wb2 = openpyxl.load_workbook(out_dir2 / data2["files"][0], data_only=False)
-                self.assertEqual(wb2.active["A1"].value, "高雄市立鳳山高級中學")
+            fake_resp = MagicMock()
+            fake_resp.read.return_value = (
+                b'{"candidates":[{"content":{"parts":[{"text":"{\\"document_type\\":\\"\\u767c\\u7968\\",\\"invoice_no\\":\\"AB-12345678\\",\\"date\\":\\"2026-11-18\\",\\"seller_name\\":\\"Test\\",\\"total_amount\\":100,\\"items\\":[{\\"name\\":\\"Pen\\",\\"spec\\":\\"\\",\\"unit\\":\\"\\",\\"quantity\\":1,\\"unit_price\\":100,\\"subtotal\\":100}]}"}]}}]}'
+            )
+            fake_resp.__enter__.return_value = fake_resp
 
-    def test_invoice_text_auto_split_preserves_over_max_rows_items(self) -> None:
-        lines = ["AB-99887766", "2026-11-19"]
-        for i in range(1, 15):
-            lines.append(f"測試品項{i}  1  100  100TX")
-        lines.append("總計: 1400")
-        res = self.client.post(
-            "/api/preview",
-            json={
-                "mode": "invoice_text",
-                "invoice_text": "\n".join(lines),
-                "budget_code": "321",
-                "department": "總務處",
-                "auto_split": True,
-                "max_amount": 3000,
-            },
-        )
-        data = res.get_json()
-        self.assertTrue(data["ok"])
-        self.assertEqual(len(data["requests"]), 2)
-        total_items = sum(len(r["items"]) for r in data["requests"])
-        self.assertEqual(total_items, 14)
+            captured_req = {}
 
-    def test_parse_raw_ocr_cpsat_api(self) -> None:
-        raw_ocr = (
-            "小北百貨 台南安南店\n"
-            "發票號碼：XY-12345678\n"
-            "2026-11-19\n"
-            "影印紙(A4)  包  2  120  240TX\n"
-            "奇異筆黑色  支  3  30  90TX\n"
-            "現金  500\n"
-            "找零  170\n"
-            "總計  330\n"
-        )
-        res = self.client.post(
-            "/api/parse-raw-ocr-cpsat",
-            json={"raw_text": raw_ocr},
-        )
-        data = res.get_json()
-        self.assertTrue(data["ok"])
-        self.assertEqual(data["engine"], "cpsat-raw-parser")
-        self.assertTrue(data["cpsat_verified"])
-        inv = data["invoice"]
-        self.assertEqual(inv["total_amount"], 330)
-        names = [it["name"] for it in inv["items"]]
-        self.assertEqual(names, ["影印紙", "奇異筆"])
-        self.assertEqual(inv["items"][0]["spec"], "A4")
-        self.assertEqual(inv["items"][0]["unit"], "包")
-        self.assertEqual(inv["items"][0]["quantity"], 2)
-        self.assertEqual(inv["items"][0]["unit_price"], 120)
-        self.assertEqual(inv["items"][0]["subtotal"], 240)
-        self.assertEqual(inv["items"][1]["spec"], "黑色")
-        self.assertEqual(inv["items"][1]["unit"], "支")
+            def _fake_urlopen(req, timeout=30):
+                captured_req["url"] = req.full_url
+                captured_req["headers"] = {k.lower(): v for k, v in req.header_items()}
+                return fake_resp
+
+            with patch("urllib.request.urlopen", side_effect=_fake_urlopen):
+                doc_type, _, inv = ocr_scanner._scan_with_gemini(img_path, "secret-key-123")
+
+            self.assertEqual(doc_type, "發票")
+            self.assertEqual(inv.invoice_no, "AB-12345678")
+            self.assertNotIn("secret-key-123", captured_req["url"])
+            self.assertEqual(captured_req["headers"].get("x-goog-api-key"), "secret-key-123")
 
 
 if __name__ == "__main__":

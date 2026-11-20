@@ -9,10 +9,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libreoffice-calc \
     fonts-noto-cjk \
     fonts-arphic-ukai \
-    fonts-arphic-uming \
     libgl1 \
     libglib2.0-0 \
-    && printf '<?xml version="1.0"?>\n<!DOCTYPE fontconfig SYSTEM "fonts.dtd">\n<fontconfig>\n  <match target="pattern">\n    <test qual="any" name="family"><string>標楷體</string></test>\n    <edit name="family" mode="assign" binding="same"><string>AR PL UKai TW</string></edit>\n  </match>\n  <match target="pattern">\n    <test qual="any" name="family"><string>DFKai-SB</string></test>\n    <edit name="family" mode="assign" binding="same"><string>AR PL UKai TW</string></edit>\n  </match>\n  <match target="pattern">\n    <test qual="any" name="family"><string>新細明體</string></test>\n    <edit name="family" mode="assign" binding="same"><string>AR PL UMing TW</string></edit>\n  </match>\n  <match target="pattern">\n    <test qual="any" name="family"><string>PMingLiU</string></test>\n    <edit name="family" mode="assign" binding="same"><string>AR PL UMing TW</string></edit>\n  </match>\n</fontconfig>\n' > /etc/fonts/local.conf \
+    && printf '<?xml version="1.0"?>\n<!DOCTYPE fontconfig SYSTEM "fonts.dtd">\n<fontconfig>\n  <alias><family>標楷體</family><prefer><family>AR PL UKai TW</family></prefer></alias>\n  <alias><family>DFKai-SB</family><prefer><family>AR PL UKai TW</family></prefer></alias>\n</fontconfig>\n' > /etc/fonts/local.conf \
     && fc-cache -fv \
     && rm -rf /var/lib/apt/lists/*
 
