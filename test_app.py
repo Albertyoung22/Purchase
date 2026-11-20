@@ -550,6 +550,22 @@ class TestDesktopApp(unittest.TestCase):
             self.assertEqual(data_opt["stops"][-1], "土城高中")
             self.assertEqual(set(data_opt["stops"]), {"土城高中", "教育局", "南寧高中", "白河商工"})
 
+        # Nominatim 429 fallback to Photon geocoder
+        import travel_distance
+        travel_distance._GEOCODE_CACHE.pop("國立自然科學博物館", None)
+        with (
+            patch("travel_distance._geocode_with_nominatim", return_value=None),
+            patch("travel_distance._geocode_with_photon", return_value=(24.1573, 120.6660)),
+            patch("travel_distance._osrm_driving_legs", return_value=[145.0]),
+        ):
+            res_ph = self.client.post(
+                "/api/travel/calc-route",
+                json={"stops": ["土城高中", "國立自然科學博物館"], "round_trip": False},
+            )
+            data_ph = res_ph.get_json()
+            self.assertTrue(data_ph["ok"])
+            self.assertEqual(data_ph["total_km"], 145.0)
+
 
 if __name__ == "__main__":
     unittest.main()

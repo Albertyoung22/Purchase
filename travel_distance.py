@@ -48,6 +48,11 @@ KNOWN_PLACES: dict[str, tuple[float, float]] = {
     "和順國中": (23.0588, 120.2194),
     "成功大學": (22.9969, 120.2195),
     "臺南大學": (22.9849, 120.2082),
+    "臺南市政府": (22.9922, 120.1848),
+    "臺南市立圖書館": (23.0218, 120.2367),
+    "臺南文化中心": (22.9744, 120.2215),
+    "臺灣歷史博物館": (23.0589, 120.2347),
+    "國立臺灣歷史博物館": (23.0589, 120.2347),
 }
 
 _GEOCODE_CACHE: dict[str, tuple[float, float]] = dict(KNOWN_PLACES)
@@ -75,6 +80,20 @@ def geocode_place(name: str, *, timeout_sec: float = 6.0) -> tuple[float, float]
             _GEOCODE_CACHE[raw] = coord
             return coord
 
+    coord = _geocode_with_nominatim(raw, timeout_sec=timeout_sec)
+    if coord is None:
+        coord = _geocode_with_photon(raw, timeout_sec=timeout_sec)
+    if coord is None:
+        raise ValueError(
+            f"找不到地點「{raw}」的座標（或地圖服務暫時繁忙），"
+            "請嘗試輸入更完整地名（如加上縣市名稱），或直接於表格手動輸入「起點->終點:公里數」"
+        )
+
+    _GEOCODE_CACHE[raw] = coord
+    return coord
+
+
+def _geocode_with_nominatim(raw: str, *, timeout_sec: float = 6.0) -> tuple[float, float] | None:
     query = urllib.parse.quote(raw)
     url = f"https://nominatim.openstreetmap.org/search?q={query}&countrycodes=tw&format=json&limit=1"
     req = urllib.request.Request(
@@ -82,15 +101,42 @@ def geocode_place(name: str, *, timeout_sec: float = 6.0) -> tuple[float, float]
         headers={"User-Agent": "TainanSchoolTravelHelper/1.0"},
         method="GET",
     )
-    with urllib.request.urlopen(req, timeout=timeout_sec) as resp:
-        data = json.loads(resp.read().decode("utf-8"))
+    try:
+        with urllib.request.urlopen(req, timeout=timeout_sec) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+        if data:
+            return (float(data[0]["lat"]), float(data[0]["lon"]))
+    except Exception:
+        return None
+    return None
 
-    if not data:
-        raise ValueError(f"找不到地點「{raw}」的座標，請嘗試輸入更完整地名（如加上「臺南市」）")
 
-    coord = (float(data[0]["lat"]), float(data[0]["lon"]))
-    _GEOCODE_CACHE[raw] = coord
-    return coord
+def _geocode_with_photon(raw: str, *, timeout_sec: float = 6.0) -> tuple[float, float] | None:
+    """Fallback OSM geocoder (Photon) with Taiwan bounding-box bias when Nominatim 429s."""
+    query = urllib.parse.quote(raw)
+    # Bias toward Taiwan center (23.7, 120.9)
+    url = f"https://photon.komoot.io/api/?q={query}&lat=23.7&lon=120.9&limit=5"
+    req = urllib.request.Request(
+        url,
+        headers={"User-Agent": "TainanSchoolTravelHelper/1.0"},
+        method="GET",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=timeout_sec) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+        features = data.get("features") or []
+        for feat in features:
+            props = feat.get("properties") or {}
+            coords = (feat.get("geometry") or {}).get("coordinates") or []
+            if len(coords) >= 2 and props.get("countrycode") == "TW":
+                return (float(coords[1]), float(coords[0]))
+        if features:
+            coords = (features[0].get("geometry") or {}).get("coordinates") or []
+            if len(coords) >= 2:
+                return (float(coords[1]), float(coords[0]))
+    except Exception:
+        return None
+    return None
 
 
 def _haversine_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:

@@ -1420,8 +1420,9 @@
       if (!defaultDate) {
         const sVal = document.getElementById("travelStartDate") ? document.getElementById("travelStartDate").value : "";
         if (sVal) {
-          const [, mm, dd] = sVal.split("-");
-          defaultDate = `${mm}/${dd}`;
+          const d = new Date(sVal + "T00:00:00");
+          d.setDate(d.getDate() + tbody.children.length);
+          defaultDate = `${String(d.getMonth() + 1).padStart(2, "0")}/${String(d.getDate()).padStart(2, "0")}`;
         }
       }
       tr.innerHTML = `
@@ -1507,7 +1508,13 @@
       box.innerHTML = `<span style="font-size:12px; color:var(--muted); align-self:center;">常用地點：</span>` +
         all.map(p => `
           <button type="button" class="secondary" onclick="appendTravelStop('${p.replace(/'/g, "\\'")}')" style="padding:4px 10px; font-size:12px; border-radius:999px;">＋ ${p}</button>
-        `).join("");
+        `).join("") +
+        (custom.length ? `<button type="button" onclick="clearCustomPlaces()" style="background:transparent; color:var(--muted); border:none; padding:4px 6px; font-size:12px; text-decoration:underline; cursor:pointer;">清除自訂地點</button>` : "");
+    }
+
+    function clearCustomPlaces() {
+      try { localStorage.removeItem(TRAVEL_CUSTOM_PLACES_KEY); } catch {}
+      renderTravelQuickPlaces();
     }
 
     function appendTravelStop(place) {
@@ -1525,7 +1532,6 @@
       const val = (inp.value || "").trim();
       if (!val) return;
       appendTravelStop(val);
-      saveCustomPlace(val);
       inp.value = "";
     }
 
@@ -1621,7 +1627,7 @@
           segments_text: hasSegSyntax ? routeVal : "",
           route_text: hasSegSyntax ? "" : routeVal,
           one_way_km: tr.querySelector(".t-km").value.trim(),
-          bus_equivalent_fare: (mode === "self_car" || mode === "self_scooter") && fareVal ? fareVal : "",
+          bus_equivalent_fare: (mode === "self_car" || mode === "self_scooter") && fareVal && parseFloat(fareVal) > 0 ? fareVal : "",
           fare: (mode !== "self_car" && mode !== "self_scooter") ? fareVal : "",
           taxi_approved: mode === "taxi",
           is_holiday_lodging: tr.querySelector(".t-holiday").checked,
@@ -1702,6 +1708,12 @@
       const rowEls = [...document.querySelectorAll("#travelDaysBody tr")];
       (data.days || []).forEach((d, idx) => {
         if (rowEls[idx]) {
+          const fareInp = rowEls[idx].querySelector(".t-fare");
+          const modeVal = rowEls[idx].querySelector(".t-mode").value;
+          if (fareInp && (!fareInp.value.trim() || fareInp.value.trim() === "0")) {
+            const autoFare = modeVal === "self_car" ? d.self_car_fare : (modeVal === "self_scooter" ? d.self_scooter_fare : 0);
+            if (autoFare > 0) fareInp.placeholder = `自動(${autoFare})`;
+          }
           const miscInp = rowEls[idx].querySelector(".t-misc");
           if (miscInp && !miscInp.value.trim()) {
             miscInp.placeholder = `自動(${d.misc_fee})`;

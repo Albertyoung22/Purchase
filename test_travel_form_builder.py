@@ -133,6 +133,13 @@ class TestTravelFormBuilder(unittest.TestCase):
         self.assertEqual(cd.misc_fee, 0)
         self.assertEqual(amount_to_chinese_upper(10205), "新台幣壹萬零貳佰零伍元整")
 
+        # Lodging under 60km should add approval reminder note (要點第9點)
+        cd_near_lodging = compute_day_amounts(
+            TravelDayEntry(date="11/20", transport_mode="self_car", one_way_km=25.0, lodging_actual=1500),
+            rates=report.rates,
+        )
+        self.assertIn("須事前經機關核准", cd_near_lodging.note)
+
 
 if __name__ == "__main__":
     unittest.main()

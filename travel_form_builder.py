@@ -226,9 +226,12 @@ def compute_day_amounts(
         else:
             notes.append("需檢附票根或購票證明")
 
-    # Lodging cap (附表一: 平日 3,500 / 假日 4,500)
+    # Lodging cap (附表一: 平日 3,500 / 假日 4,500; 要點第9點: 未達60公里須事前核准)
     lodging_limit = rates.lodging_limit_holiday if entry.is_holiday_lodging else rates.lodging_limit_weekday
     raw_lodging = max(0, int(round(entry.lodging_actual)))
+    one_way = _infer_one_way_km(entry)
+    if raw_lodging > 0 and 0 < one_way < rates.misc_far_km:
+        notes.append("單程未達60公里，報支住宿費須事前經機關核准")
     if raw_lodging > lodging_limit:
         lodging_fee = lodging_limit
         day_kind = "假日" if entry.is_holiday_lodging else "平日"
@@ -240,7 +243,6 @@ def compute_day_amounts(
     if entry.misc_fee is not None:
         misc_fee = max(0, int(round(entry.misc_fee)))
     else:
-        one_way = _infer_one_way_km(entry)
         if one_way > rates.misc_far_km:
             misc_fee = rates.misc_far_amount
         elif one_way >= rates.misc_near_km:
@@ -284,9 +286,11 @@ def _split_amount_digits_5(amount: int) -> list[str]:
     """Split integer NTD into [萬, 千, 百, 十, 元] cells matching the school .doc voucher."""
     if amount <= 0:
         return ["", "", "", "", "0"]
+    if amount >= 100000:
+        wan = str(amount // 10000)
+        rem = f"{amount % 10000:04d}"
+        return [wan, rem[0], rem[1], rem[2], rem[3]]
     s = str(int(amount)).rjust(5, " ")
-    if len(s) > 5:
-        s = s[-5:]
     return list(s)
 
 
