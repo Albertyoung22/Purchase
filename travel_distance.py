@@ -9,6 +9,8 @@ import urllib.parse
 import urllib.request
 from typing import Any
 
+from ortools.sat.python import cp_model
+
 # Pre-cached coordinates (lat, lon) for common Tainan schools & government offices
 KNOWN_PLACES: dict[str, tuple[float, float]] = {
     "臺南市立土城高級中學": (23.0665, 120.1287),
@@ -181,4 +183,136 @@ def calculate_route_mileage(
         "total_km": total_km,
         "one_way_km": one_way_km,
         "source": source,
+        "cpsat_optimized": False,
+    }
+
+
+def _osrm_distance_matrix(coords: list[tuple[float, float]], *, timeout_sec: float = 6.0) -> list[list[float]] | None:
+    """Query OSRM table service for an NxN driving distance matrix in km."""
+    if len(coords) < 2:
+        return [[0.0]]
+    coord_str = ";".join(f"{lon:.6f},{lat:.6f}" for lat, lon in coords)
+    url = f"https://router.project-osrm.org/table/v1/driving/{coord_str}?annotations=distance"
+    req = urllib.request.Request(
+        url,
+        headers={"User-Agent": "TainanSchoolTravelHelper/1.0"},
+        method="GET",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=timeout_sec) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+        if data.get("code") == "Ok" and data.get("distances"):
+            raw_mat = data["distances"]
+            return [
+                [round(float(val or 0.0) / 1000.0, 1) for val in row]
+                for row in raw_mat
+            ]
+    except Exception:
+        return None
+    return None
+
+
+def optimize_route_with_cpsat(
+    stops: list[str],
+    *,
+    round_trip: bool = True,
+    time_limit_sec: float = 2.0,
+) -> dict[str, Any]:
+    """Use OR-Tools CP-SAT AddCircuit to find the shortest direct route order (公告 78184 號順路原則)."""
+    raw_clean = [s.strip() for s in stops if s.strip()]
+    if len(raw_clean) < 2:
+        raise ValueError("請至少輸入「起點」與「終點」兩個地點")
+
+    origin = raw_clean[0]
+    unique_stops: list[str] = [origin]
+    for s in raw_clean[1:]:
+        if s not in unique_stops:
+            unique_stops.append(s)
+
+    if len(unique_stops) <= 2:
+        res = calculate_route_mileage(unique_stops, round_trip=round_trip)
+        res["cpsat_optimized"] = True
+        return res
+
+    coords = [geocode_place(s) for s in unique_stops]
+    matrix_km = _osrm_distance_matrix(coords)
+    source = "osrm"
+    if matrix_km is None:
+        source = "haversine_fallback"
+        n_pts = len(coords)
+        matrix_km = [
+            [
+                0.0
+                if i == j
+                else round(_haversine_km(coords[i][0], coords[i][1], coords[j][0], coords[j][1]) * 1.3, 1)
+                for j in range(n_pts)
+            ]
+            for i in range(n_pts)
+        ]
+
+    n = len(unique_stops)
+    # Scale to 0.1 km integers for exact CP-SAT minimization
+    scaled = [[int(round(matrix_km[i][j] * 10)) for j in range(n)] for i in range(n)]
+
+    model = cp_model.CpModel()
+    arcs: list[tuple[int, int, cp_model.IntVar]] = []
+    obj_terms: list[cp_model.LinearExpr] = []
+
+    for i in range(n):
+        for j in range(n):
+            if i == j:
+                continue
+            lit = model.new_bool_var(f"arc_{i}_{j}")
+            arcs.append((i, j, lit))
+            cost = 0 if (not round_trip and j == 0) else scaled[i][j]
+            obj_terms.append(cost * lit)
+
+    model.add_circuit(arcs)
+    model.minimize(sum(obj_terms))
+
+    solver = cp_model.CpSolver()
+    solver.parameters.max_time_in_seconds = time_limit_sec
+    status = solver.solve(model)
+    if status not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
+        raise RuntimeError(f"CP-SAT 路線最佳化失敗 (status={solver.status_name(status)})")
+
+    next_node: dict[int, int] = {}
+    for i, j, lit in arcs:
+        if solver.value(lit) == 1:
+            next_node[i] = j
+
+    ordered_indices = [0]
+    curr = next_node[0]
+    while curr != 0 and len(ordered_indices) < n:
+        ordered_indices.append(curr)
+        curr = next_node[curr]
+
+    ordered_stops = [unique_stops[idx] for idx in ordered_indices]
+    if round_trip:
+        ordered_stops.append(origin)
+        ordered_indices.append(0)
+
+    segments = [
+        {
+            "origin": ordered_stops[k],
+            "destination": ordered_stops[k + 1],
+            "distance_km": matrix_km[ordered_indices[k]][ordered_indices[k + 1]],
+        }
+        for k in range(len(ordered_stops) - 1)
+    ]
+    total_km = round(sum(seg["distance_km"] for seg in segments), 1)
+    is_loop = len(ordered_stops) >= 3 and ordered_stops[0] == ordered_stops[-1]
+    one_way_km = round(total_km / 2.0, 1) if is_loop else total_km
+    segments_text = ", ".join(
+        f"{seg['origin']}->{seg['destination']}:{seg['distance_km']}" for seg in segments
+    )
+
+    return {
+        "stops": ordered_stops,
+        "segments": segments,
+        "segments_text": segments_text,
+        "total_km": total_km,
+        "one_way_km": one_way_km,
+        "source": source,
+        "cpsat_optimized": True,
     }

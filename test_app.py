@@ -535,6 +535,21 @@ class TestDesktopApp(unittest.TestCase):
             self.assertEqual(data_fb["source"], "haversine_fallback")
             self.assertGreater(data_fb["total_km"], 10.0)
 
+        # CP-SAT TSP route optimization (公告 78184 號順路最佳化):
+        # Deliberately pass a bad order: 土城高中 -> 白河商工 -> 教育局
+        # CP-SAT should reorder to 土城高中 -> 教育局 -> 白河商工 -> 土城高中 (or reverse)
+        with patch("travel_distance._osrm_distance_matrix", return_value=None):
+            res_opt = self.client.post(
+                "/api/travel/calc-route",
+                json={"stops": ["土城高中", "白河商工", "教育局", "南寧高中"], "round_trip": True, "optimize_order": True},
+            )
+            data_opt = res_opt.get_json()
+            self.assertTrue(data_opt["ok"])
+            self.assertTrue(data_opt["cpsat_optimized"])
+            self.assertEqual(data_opt["stops"][0], "土城高中")
+            self.assertEqual(data_opt["stops"][-1], "土城高中")
+            self.assertEqual(set(data_opt["stops"]), {"土城高中", "教育局", "南寧高中", "白河商工"})
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -490,6 +490,10 @@
               <input type="checkbox" id="travelRoundTrip" checked style="width:auto;" />
               <label for="travelRoundTrip" style="margin:0; cursor:pointer;">自動來回</label>
             </div>
+            <div style="display:flex; align-items:center; gap:6px;">
+              <input type="checkbox" id="travelOptimizeRoute" checked style="width:auto;" />
+              <label for="travelOptimizeRoute" style="margin:0; cursor:pointer;" title="依公告78184號，使用 OR-Tools CP-SAT 自動排列最順路省時順序">CP-SAT 最順路排序</label>
+            </div>
             <div>
               <button type="button" onclick="calcSmartRouteToRow()">智慧計算里程</button>
             </div>
@@ -1524,6 +1528,7 @@
         addCustomTravelStop();
       }
       const roundTrip = document.getElementById("travelRoundTrip").checked;
+      const optimizeOrder = document.getElementById("travelOptimizeRoute").checked;
       if (travelStops.length < 2) {
         return showTravelStatus("請至少選擇或加入一個目的地站點（例如點選「＋ 教育局」）", false);
       }
@@ -1531,7 +1536,7 @@
       const res = await fetch("/api/travel/calc-route", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ stops: travelStops, round_trip: roundTrip }),
+        body: JSON.stringify({ stops: travelStops, round_trip: roundTrip, optimize_order: optimizeOrder }),
       });
       const data = await res.json();
       if (!data.ok) return showTravelStatus(data.error, false);
@@ -1541,8 +1546,9 @@
       const rate = parseFloat(document.getElementById("travelCarRate").value || "3.25") || 3.25;
       const estFare = Math.round(data.total_km * rate);
       const srcLabel = data.source === "osrm" ? "實際道路距離" : "直線估算(×1.3)";
+      const optLabel = data.cpsat_optimized ? "｜CP-SAT 已排最順路" : "";
       document.getElementById("travelSmartResult").textContent =
-        `✔ ${srcLabel}：總里程 ${data.total_km} km（單程約 ${data.one_way_km} km），自用車預估 ${estFare} 元｜${data.segments_text}`;
+        `✔ ${srcLabel}${optLabel}：總里程 ${data.total_km} km（單程約 ${data.one_way_km} km），自用車預估 ${estFare} 元｜${data.segments_text}`;
 
       const rows = [...document.querySelectorAll("#travelDaysBody tr")];
       let targetRow = rows.find(r => !r.querySelector(".t-route").value.trim());

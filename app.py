@@ -35,7 +35,7 @@ from fill_purchase_forms import (
     sanitize_filename,
     split_requests_opt,
 )
-from travel_distance import calculate_route_mileage, parse_stops_text
+from travel_distance import calculate_route_mileage, optimize_route_with_cpsat, parse_stops_text
 from travel_form_builder import (
     RouteSegment,
     TravelDayEntry,
@@ -831,7 +831,11 @@ def api_travel_calc_route():
             stops = parse_stops_text(str(payload.get("route_text", "")))
 
         round_trip = bool(payload.get("round_trip", False))
-        result = calculate_route_mileage(stops, round_trip=round_trip)
+        optimize_order = bool(payload.get("optimize_order", False))
+        if optimize_order:
+            result = optimize_route_with_cpsat(stops, round_trip=round_trip)
+        else:
+            result = calculate_route_mileage(stops, round_trip=round_trip)
         return jsonify({"ok": True, **result})
     except Exception as exc:
         return jsonify({"ok": False, "error": str(exc)}), 400
