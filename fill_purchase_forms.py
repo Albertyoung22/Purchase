@@ -12,7 +12,6 @@ from pathlib import Path
 from typing import Any
 
 import openpyxl
-from openpyxl.styles import Alignment
 from openpyxl.utils import column_index_from_string, get_column_letter
 from openpyxl.worksheet.worksheet import Worksheet
 
@@ -290,49 +289,6 @@ def _detect_sheet_layout(ws: Worksheet, cfg: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _display_width(text: str) -> int:
-    """Estimate half-width character count (CJK/full-width = 2, ASCII = 1)."""
-    return sum(2 if ord(ch) > 0x7F else 1 for ch in text)
-
-
-def _enable_wrap(ws: Worksheet, coord: str, *, horizontal: str | None = None) -> None:
-    """Enable wrap_text on a cell while preserving its other alignment properties."""
-    from copy import copy
-
-    target = resolve_top_left_coord(ws, coord)
-    cell = ws[target]
-    al = copy(cell.alignment) if cell.alignment else Alignment()
-    al.wrap_text = True
-    if horizontal is not None:
-        al.horizontal = horizontal
-    cell.alignment = al
-
-
-def _fit_item_row_height(ws: Worksheet, row_num: int, item: Any, cols: dict[str, str]) -> None:
-    """Ensure wrapped text in name/spec/note columns fits without vertical clipping."""
-    import math
-
-    # Approximate half-width char capacities per merged cell in template.xlsx (font size 11-12)
-    checks = [
-        (cols.get("name"), item.name, 22),
-        (cols.get("spec"), item.spec, 13),
-        (cols.get("note"), item.display_note, 16),
-    ]
-    max_lines = 1
-    for col_letter, text, capacity in checks:
-        if not col_letter or not text:
-            continue
-        _enable_wrap(ws, f"{col_letter}{row_num}")
-        lines_for_col = 0
-        for segment in str(text).splitlines() or [""]:
-            lines_for_col += max(1, math.ceil(_display_width(segment) / capacity))
-        max_lines = max(max_lines, lines_for_col)
-
-    if max_lines > 1:
-        base_h = ws.row_dimensions[row_num].height or 21.0
-        ws.row_dimensions[row_num].height = max(base_h, max_lines * 16.0 + 6.0)
-
-
 def _hide_instruction_row(ws: Worksheet) -> None:
     """Clear and hide the top '操作步驟：...' yellow banner row if present."""
     from openpyxl.styles import PatternFill
@@ -344,6 +300,71 @@ def _hide_instruction_row(ws: Worksheet) -> None:
         for col in range(1, ws.max_column + 1):
             ws.cell(1, col).fill = no_fill
         ws.row_dimensions[1].hidden = True
+
+
+def _normalize_vertical_alignments(ws: Worksheet) -> None:
+    """Ensure vertical CJK labels (e.g. 請購人, 處室主任, 代墊欄) are horizontally centered."""
+    from copy import copy
+
+    for row in ws.iter_rows(min_row=1, max_row=ws.max_row, min_col=1, max_col=10):
+        for cell in row:
+            if (
+                isinstance(cell.value, str)
+                and cell.alignment
+                and cell.alignment.textRotation == 255
+                and (cell.alignment.horizontal != "center" or cell.alignment.indent)
+            ):
+                new_align = copy(cell.alignment)
+                new_align.horizontal = "center"
+                new_align.indent = 0
+                cell.alignment = new_align
+
+
+def _normalize_budget_alignments(
+    ws: Worksheet,
+    layout: dict[str, Any],
+    cells: dict[str, Any],
+) -> None:
+    """Normalize alignment & indent in budget header cells so text never clips or skews."""
+    from copy import copy
+    from openpyxl.styles import Alignment
+
+    # Multi-row merged cells (計畫名稱, 一級用途別): centered with wrap
+    for key in ("plan_coord", "lv1_coord"):
+        coord = layout.get(key)
+        if not coord:
+            continue
+        cell = ws[coord]
+        al = copy(cell.alignment) if cell.alignment else Alignment()
+        al.horizontal = "center"
+        al.vertical = "center"
+        al.indent = 0
+        al.wrap_text = True
+        cell.alignment = al
+
+    # Single-row merged cells (二級用途別 F8, 三級用途別 F9): remove stray indent=3 & shrink-to-fit on 1 line
+    for key in ("lv2_coord", "lv3_coord"):
+        coord = layout.get(key)
+        if not coord:
+            continue
+        cell = ws[coord]
+        al = copy(cell.alignment) if cell.alignment else Alignment()
+        al.horizontal = "center"
+        al.vertical = "center"
+        al.indent = 0
+        al.wrap_text = False
+        al.shrink_to_fit = True
+        cell.alignment = al
+
+    # Budget code cell (H6): center cleanly in the yellow box
+    bc_coord = cells.get("budget_code")
+    if bc_coord:
+        cell = ws[bc_coord]
+        al = copy(cell.alignment) if cell.alignment else Alignment()
+        al.horizontal = "center"
+        al.vertical = "center"
+        al.indent = 0
+        cell.alignment = al
 
 
 def _configure_single_page_print(ws: Worksheet) -> None:
@@ -475,21 +496,16 @@ def fill_worksheet(ws: Worksheet, req: PurchaseRequest, cfg: dict[str, Any]) -> 
 
     if req.plan_name and layout["plan_coord"]:
         safe_set_cell(ws, layout["plan_coord"], req.plan_name, overwrite_formula=True)
-        _enable_wrap(ws, layout["plan_coord"])
     if req.level1 and layout["lv1_coord"]:
         safe_set_cell(ws, layout["lv1_coord"], req.level1, overwrite_formula=True)
-        _enable_wrap(ws, layout["lv1_coord"])
     if req.level2 and layout["lv2_coord"]:
         safe_set_cell(ws, layout["lv2_coord"], req.level2, overwrite_formula=True)
-        _enable_wrap(ws, layout["lv2_coord"])
     if req.level3 and layout["lv3_coord"]:
         safe_set_cell(ws, layout["lv3_coord"], req.level3, overwrite_formula=True)
-        _enable_wrap(ws, layout["lv3_coord"])
 
-    if cells.get("payer_name"):
+    if req.payer_name and cells.get("payer_name"):
         template = cells.get("payer_template", "{name}")
-        display_payer = req.payer_name.strip() if req.payer_name and req.payer_name.strip() else "     "
-        safe_set_cell(ws, cells["payer_name"], template.format(name=display_payer))
+        safe_set_cell(ws, cells["payer_name"], template.format(name=req.payer_name))
 
     if req.receipt_count is not None and layout["receipt_coord"]:
         rc_template = cells.get("receipt_count_template", "黏貼單據  {count}  張")
@@ -497,14 +513,12 @@ def fill_worksheet(ws: Worksheet, req: PurchaseRequest, cfg: dict[str, Any]) -> 
 
     if req.department and layout["dept_coord"]:
         safe_set_cell(ws, layout["dept_coord"], req.department)
-        _enable_wrap(ws, layout["dept_coord"], horizontal="center")
 
     if req.request_date and layout["date_coord"]:
         safe_set_cell(ws, layout["date_coord"], req.request_date)
 
     if req.purpose and layout["purpose_coord"]:
         safe_set_cell(ws, layout["purpose_coord"], req.purpose)
-        _enable_wrap(ws, layout["purpose_coord"])
 
     start_row = layout["start_row"]
     max_rows = layout["max_rows"]
@@ -547,13 +561,14 @@ def fill_worksheet(ws: Worksheet, req: PurchaseRequest, cfg: dict[str, Any]) -> 
             )
         if cols.get("note") and item.display_note:
             safe_set_cell(ws, f"{cols['note']}{row_num}", item.display_note)
-        _fit_item_row_height(ws, row_num, item, cols)
 
     # Preserves =SUM(...) / header link formulas if present in template
     if layout["total_coord"]:
         safe_set_cell(ws, layout["total_coord"], req.total_amount)
     if cells.get("header_amount"):
         safe_set_cell(ws, cells["header_amount"], req.total_amount)
+    _normalize_vertical_alignments(ws)
+    _normalize_budget_alignments(ws, layout, cells)
     _configure_single_page_print(ws)
 
 

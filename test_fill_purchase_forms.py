@@ -472,56 +472,33 @@ class TestFillPurchaseForms(unittest.TestCase):
             self.assertTrue(files[0].exists())
             self.assertTrue(files[1].exists())
 
-    def test_long_item_name_enables_wrap_and_expands_row_height(self) -> None:
-        cfg = load_config(Path("config.json"))
+    def test_real_template_normalizes_vertical_and_budget_alignments(self) -> None:
+        base_dir = Path(__file__).parent
+        cfg = load_config(base_dir / "config.json")
         req = PurchaseRequest(
-            request_id="WRAP-001",
+            request_id="ALIGN-001",
             budget_code="321",
             department="總務處",
-            purpose="這是一段比較長的用途說明文字用來測試自動換行是否正確開啟",
-            items=[
-                LineItem(
-                    name="115年09-10月【IDREES 伊德萊斯】超長品名測試自動換行與列高調整",
-                    unit="個",
-                    quantity=1,
-                    unit_price=599,
-                )
-            ],
+            purpose="對齊測試",
+            items=[LineItem(name="文具", unit="批", quantity=1, unit_price=5850)],
         )
         with tempfile.TemporaryDirectory() as tmp:
-            tmp_dir = Path(tmp)
-            tpl_path = build_mock_template(tmp_dir / "tpl.xlsx")
-            out_dir = tmp_dir / "output"
-            files = generate_from_requests(tpl_path, [req], out_dir, cfg)
-            wb = openpyxl.load_workbook(files[0])
-            ws = wb.active
-            self.assertTrue(ws["A19"].alignment.wrap_text)
-            self.assertGreater(ws.row_dimensions[19].height, 21.0)
-            self.assertTrue(ws["A27"].alignment.wrap_text)
-            self.assertEqual(ws["C16"].alignment.horizontal, "center")
-
-    def test_empty_payer_name_clears_template_default_payer(self) -> None:
-        cfg = load_config(Path("config.json"))
-        req = PurchaseRequest(
-            request_id="PAYER-CLEAR",
-            budget_code="321",
-            department="總務處",
-            payer_name="",
-            items=[LineItem(name="原子筆", unit="支", quantity=2, unit_price=30)],
-        )
-        with tempfile.TemporaryDirectory() as tmp:
-            tmp_dir = Path(tmp)
-            tpl_path = tmp_dir / "tpl.xlsx"
-            build_mock_template(tpl_path)
-            wb_tpl = openpyxl.load_workbook(tpl_path)
-            wb_tpl.active["J8"] = "因業務執行需要由(簽章) 楊敦州 代墊"
-            wb_tpl.save(tpl_path)
-
-            files = generate_from_requests(tpl_path, [req], tmp_dir / "output", cfg)
-            wb = openpyxl.load_workbook(files[0])
-            val = wb.active["J8"].value
-            self.assertNotIn("楊敦州", val)
-            self.assertIn("代墊", val)
+            files = generate_from_requests(base_dir / "template.xlsx", [req], Path(tmp), cfg)
+            ws = openpyxl.load_workbook(files[0]).active
+            # 請購人 & 處室主任 both horizontally centered
+            self.assertEqual(ws["A33"].alignment.horizontal, "center")
+            self.assertEqual(ws["A38"].alignment.horizontal, "center")
+            # 二、三級用途別: no stray indent=3, centered, shrink_to_fit without clipping wrap
+            for coord in ("F8", "F9"):
+                self.assertEqual(ws[coord].alignment.horizontal, "center")
+                self.assertEqual(ws[coord].alignment.vertical, "center")
+                self.assertEqual(ws[coord].alignment.indent, 0)
+                self.assertFalse(ws[coord].alignment.wrap_text)
+                self.assertTrue(ws[coord].alignment.shrink_to_fit)
+            # 計畫名稱 & 一級用途別 & 預算科目代碼
+            self.assertEqual(ws["B8"].alignment.horizontal, "center")
+            self.assertEqual(ws["C8"].alignment.horizontal, "center")
+            self.assertEqual(ws["H6"].alignment.horizontal, "center")
 
 
 if __name__ == "__main__":
