@@ -155,6 +155,11 @@
     .main-view.active { display: block; }
     .excel-fallback { width: 100%; border-collapse: collapse; font-family: "DFKai-SB", "標楷體", serif; font-size: 13px; background: #fff; }
     .excel-fallback td { border: 1px solid #334155; padding: 5px 7px; text-align: center; }
+    #travelDaysTable th, #travelDaysTable td { padding: 4px 3px; }
+    #travelDaysTable input[type="text"], #travelDaysTable input[type="number"], #travelDaysTable select {
+      padding: 5px 4px;
+      font-size: 12px;
+    }
   </style>
 </head>
 <body>
@@ -509,17 +514,17 @@
           <table id="travelDaysTable" style="font-size:12px;">
             <thead>
               <tr>
-                <th style="width:64px;">月日</th>
-                <th style="width:125px;">交通方式</th>
+                <th style="min-width:56px;">月日</th>
+                <th style="min-width:118px;">交通方式</th>
                 <th style="min-width:170px;">起訖地點 / 里程</th>
-                <th style="width:62px;">單程km</th>
-                <th style="width:74px;">車資/比照</th>
-                <th style="width:68px;">住宿費</th>
-                <th style="width:48px;">假日</th>
-                <th style="width:66px;">雜費</th>
-                <th style="width:48px;">單據</th>
-                <th style="min-width:110px;">工作摘要</th>
-                <th style="width:92px;">操作</th>
+                <th style="min-width:54px;">單程km</th>
+                <th style="min-width:68px;">車資/比照</th>
+                <th style="min-width:58px;">住宿費</th>
+                <th style="min-width:38px;">假日</th>
+                <th style="min-width:54px;">雜費</th>
+                <th style="min-width:42px;">單據</th>
+                <th style="min-width:105px;">工作摘要</th>
+                <th style="min-width:86px;">操作</th>
               </tr>
             </thead>
             <tbody id="travelDaysBody"></tbody>
@@ -1411,8 +1416,16 @@
       const tbody = document.getElementById("travelDaysBody");
       const tr = document.createElement("tr");
       const mode = preset.transport_mode || "self_car";
+      let defaultDate = preset.date || "";
+      if (!defaultDate) {
+        const sVal = document.getElementById("travelStartDate") ? document.getElementById("travelStartDate").value : "";
+        if (sVal) {
+          const [, mm, dd] = sVal.split("-");
+          defaultDate = `${mm}/${dd}`;
+        }
+      }
       tr.innerHTML = `
-        <td><input type="text" class="t-date" value="${preset.date || ""}" placeholder="11/20" /></td>
+        <td><input type="text" class="t-date" value="${defaultDate}" placeholder="11/20" /></td>
         <td>
           <select class="t-mode">
             <option value="self_car" ${mode === "self_car" ? "selected" : ""}>自用/租賃汽車</option>
@@ -1736,6 +1749,7 @@
     }
 
     addTravelDayRow();
+    onTravelDateChange();
   </script>
 </body>
 </html>
