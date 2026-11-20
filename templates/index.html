@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>土城高中｜採購申請單自動化桌面系統</title>
+  <title>學校採購申請單自動化系統</title>
   <link rel="icon" type="image/svg+xml" href="/static/favicon.svg" />
   <link rel="icon" type="image/png" href="/static/favicon.png" />
   <style>
@@ -160,8 +160,8 @@
 <body>
   <header>
     <div>
-      <h1>臺南市立土城高級中學｜採購申請單自動化系統</h1>
-      <div class="sub">Flask + Waitress 桌面應用程式 ｜ 支援電子發票解析、明細批次填表、OR-Tools CP-SAT 最佳化分單</div>
+      <h1 id="appTitle">學校採購申請單自動化系統</h1>
+      <div class="sub">支援電子發票／估價單 OCR 掃描、明細批次填表、OR-Tools CP-SAT 最佳化分單（個人設定與紀錄皆存於本機瀏覽器）</div>
     </div>
     {% if not is_cloud %}
     <div style="display:flex; gap:8px;">
@@ -199,6 +199,12 @@
       </div>
 
       <!-- Shared Header Metadata -->
+      <div class="row" style="margin-bottom:8px;">
+        <div class="col">
+          <label>學校／機關名稱（自動記在本機瀏覽器；留空則使用範本預設校名）</label>
+          <input type="text" id="schoolName" placeholder="例如：臺南市立○○高級中學（留空沿用範本預設）" oninput="updateSchoolTitle()" />
+        </div>
+      </div>
       <div class="row" id="sharedMeta" style="margin-bottom:10px;">
         <div class="col">
           <label>預算科目代碼（可搜尋、下拉或手動輸入）</label>
@@ -215,7 +221,7 @@
         <div class="col">
           <label>代墊人（可下拉選擇或手動輸入，選填）</label>
           <select id="payerSelect" onchange="syncSelectToInput('payerSelect', 'payerName')"></select>
-          <input type="text" id="payerName" placeholder="例如：楊敦州" style="margin-top:4px;" />
+          <input type="text" id="payerName" placeholder="例如：王小明（選填）" style="margin-top:4px;" />
         </div>
         <div class="col">
           <label>用途說明（可下拉選擇或手動輸入）</label>
@@ -454,11 +460,20 @@
     let budgetMap = {};
     let budgetEntries = [];
 
+    function updateSchoolTitle() {
+      const name = (document.getElementById("schoolName")?.value || "").trim();
+      const title = name ? `${name}｜採購申請單自動化系統` : "學校採購申請單自動化系統";
+      const h1 = document.getElementById("appTitle");
+      if (h1) h1.textContent = title;
+      document.title = title;
+    }
+
     function loadUserPrefs() {
       try {
         const raw = localStorage.getItem(PREFS_STORAGE_KEY);
         if (!raw) return;
         const prefs = JSON.parse(raw);
+        if (prefs.school_name !== undefined) document.getElementById("schoolName").value = prefs.school_name;
         if (prefs.budget_code !== undefined) document.getElementById("budgetCode").value = prefs.budget_code;
         if (prefs.department !== undefined) document.getElementById("department").value = prefs.department;
         if (prefs.payer_name !== undefined) document.getElementById("payerName").value = prefs.payer_name;
@@ -467,6 +482,7 @@
         if (prefs.auto_split !== undefined) document.getElementById("autoSplit").checked = Boolean(prefs.auto_split);
         if (prefs.max_amount !== undefined && prefs.max_amount !== "") document.getElementById("maxAmount").value = prefs.max_amount;
       } catch {}
+      updateSchoolTitle();
       if (IS_CLOUD) {
         try {
           const customCfg = localStorage.getItem(CONFIG_STORAGE_KEY);
@@ -478,6 +494,7 @@
     function saveUserPrefs() {
       try {
         const prefs = {
+          school_name: document.getElementById("schoolName").value,
           budget_code: document.getElementById("budgetCode").value,
           department: document.getElementById("department").value,
           payer_name: document.getElementById("payerName").value,
@@ -496,6 +513,7 @@
         localStorage.removeItem(PREFS_STORAGE_KEY);
         if (IS_CLOUD) localStorage.removeItem(CONFIG_STORAGE_KEY);
       } catch {}
+      document.getElementById("schoolName").value = "";
       document.getElementById("budgetCode").value = "321";
       document.getElementById("department").value = "總務處";
       document.getElementById("payerName").value = "";
@@ -503,12 +521,13 @@
       document.getElementById("geminiKey").value = "";
       document.getElementById("autoSplit").checked = false;
       document.getElementById("maxAmount").value = "3000";
+      updateSchoolTitle();
       onBudgetCodeChange();
       showStatus("已重設本機個人偏好設定");
     }
 
     function bindUserPrefsAutosave() {
-      ["budgetCode", "department", "payerName", "purpose", "geminiKey", "maxAmount"].forEach(id => {
+      ["schoolName", "budgetCode", "department", "payerName", "purpose", "geminiKey", "maxAmount"].forEach(id => {
         const el = document.getElementById(id);
         if (el) {
           el.addEventListener("input", saveUserPrefs);
@@ -861,6 +880,7 @@
       }));
       const payload = {
         mode: currentMode === "scan" ? "manual" : currentMode,
+        school_name: document.getElementById("schoolName").value.trim(),
         budget_code: document.getElementById("budgetCode").value,
         plan_name: document.getElementById("planName").value,
         level1: document.getElementById("level1").value,

@@ -59,6 +59,7 @@ class PurchaseRequest:
     level2: str = ""
     level3: str = ""
     department: str = ""
+    school_name: str = ""
     request_date: str = ""
     payer_name: str = ""
     receipt_count: int | None = None
@@ -234,6 +235,7 @@ def _detect_sheet_layout(ws: Worksheet, cfg: dict[str, Any]) -> dict[str, Any]:
     lv1_coord: str | None = None
     lv2_coord: str | None = None
     lv3_coord: str | None = None
+    school_coord: str | None = None
 
     for row in ws.iter_rows(min_row=1, max_row=min(ws.max_row, 45), max_col=12):
         for cell in row:
@@ -241,7 +243,9 @@ def _detect_sheet_layout(ws: Worksheet, cfg: dict[str, Any]) -> dict[str, Any]:
             if not isinstance(val, str):
                 continue
             compact = val.replace(" ", "").replace("\u3000", "").strip()
-            if unit_price_row is None and compact == "單價":
+            if school_coord is None and cell.row > 1 and "採購申請單" in compact:
+                school_coord = f"A{cell.row - 1}"
+            elif unit_price_row is None and compact == "單價":
                 unit_price_row = cell.row
             elif total_row is None and compact == "合計":
                 total_row = cell.row
@@ -286,6 +290,7 @@ def _detect_sheet_layout(ws: Worksheet, cfg: dict[str, Any]) -> dict[str, Any]:
         "lv1_coord": lv1_coord,
         "lv2_coord": lv2_coord,
         "lv3_coord": lv3_coord,
+        "school_coord": school_coord,
     }
 
 
@@ -489,6 +494,9 @@ def fill_worksheet(ws: Worksheet, req: PurchaseRequest, cfg: dict[str, Any]) -> 
             extra = len(req.items) - template_rows
             _expand_item_rows(ws, start_row, old_total_row, extra)
             layout = _detect_sheet_layout(ws, cfg)
+
+    if req.school_name and layout.get("school_coord"):
+        safe_set_cell(ws, layout["school_coord"], req.school_name, overwrite_formula=True)
 
     if req.budget_code and cells.get("budget_code"):
         code_val: Any = int(req.budget_code) if req.budget_code.isdigit() else req.budget_code

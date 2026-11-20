@@ -451,6 +451,56 @@ class TestDesktopApp(unittest.TestCase):
                 self.assertTrue(h_data["cloud_local_only"])
                 self.assertEqual(h_data["records"], [])
 
+    def test_custom_school_name_overrides_template_and_standalone_header(self) -> None:
+        import openpyxl
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_dir = Path(tmp)
+            out_dir = tmp_dir / "output"
+            # 1. With real template.xlsx (A2)
+            with (
+                patch.object(web_app, "_active_template_path", return_value=Path("template.xlsx")),
+                patch.object(web_app, "OUTPUT_DIR", out_dir),
+                patch.object(web_app, "HISTORY_PATH", tmp_dir / "history.json"),
+            ):
+                res = self.client.post(
+                    "/api/generate",
+                    json={
+                        "mode": "manual",
+                        "school_name": "臺南市立安南國民中學",
+                        "budget_code": "321",
+                        "department": "教務處",
+                        "purpose": "校名測試",
+                        "items": [{"name": "粉筆", "quantity": 2, "unit_price": 50}],
+                    },
+                )
+                data = res.get_json()
+                self.assertTrue(data["ok"])
+                wb = openpyxl.load_workbook(out_dir / data["files"][0], data_only=False)
+                self.assertEqual(wb.active["A2"].value, "臺南市立安南國民中學")
+
+            # 2. Standalone (no template, A1)
+            out_dir2 = tmp_dir / "output2"
+            with (
+                patch.object(web_app, "_active_template_path", return_value=None),
+                patch.object(web_app, "OUTPUT_DIR", out_dir2),
+                patch.object(web_app, "HISTORY_PATH", tmp_dir / "history2.json"),
+            ):
+                res2 = self.client.post(
+                    "/api/generate",
+                    json={
+                        "mode": "manual",
+                        "school_name": "高雄市立鳳山高級中學",
+                        "budget_code": "321",
+                        "department": "總務處",
+                        "items": [{"name": "資料夾", "quantity": 1, "unit_price": 100}],
+                    },
+                )
+                data2 = res2.get_json()
+                self.assertTrue(data2["ok"])
+                wb2 = openpyxl.load_workbook(out_dir2 / data2["files"][0], data_only=False)
+                self.assertEqual(wb2.active["A1"].value, "高雄市立鳳山高級中學")
+
     def test_invoice_text_auto_split_preserves_over_max_rows_items(self) -> None:
         lines = ["AB-99887766", "2026-11-19"]
         for i in range(1, 15):

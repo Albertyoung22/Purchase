@@ -579,8 +579,14 @@ def _prepare_requests_from_payload(payload: dict[str, Any], cfg: dict[str, Any])
     max_rows = int(cfg["items_table"]["max_rows"])
     if payload.get("auto_split"):
         max_amount = float(payload.get("max_amount") or 3000)
-        return split_requests_opt(reqs, max_amount=max_amount, max_rows=max_rows)
-    return chunk_requests_by_max_rows(reqs, max_rows=max_rows)
+        result = split_requests_opt(reqs, max_amount=max_amount, max_rows=max_rows)
+    else:
+        result = chunk_requests_by_max_rows(reqs, max_rows=max_rows)
+    school_name = str(payload.get("school_name") or "").strip()
+    if school_name:
+        for req in result:
+            req.school_name = school_name
+    return result
 
 
 def _resolve_request_config(payload: dict[str, Any]) -> dict[str, Any]:

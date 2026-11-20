@@ -70,7 +70,7 @@ def build_purchase_form_xlsx(req: PurchaseRequest, output_path: Path) -> Path:
 
     # Header titles
     ws.merge_cells("A1:J1")
-    ws["A1"] = "臺南市立土城高級中學"
+    ws["A1"] = req.school_name or "臺南市立土城高級中學"
     ws["A1"].font = _FONT_TITLE
     ws["A1"].alignment = _ALIGN_CENTER
     ws.row_dimensions[1].height = 24
