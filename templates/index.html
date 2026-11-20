@@ -58,7 +58,7 @@
     .row { display: flex; gap: 12px; flex-wrap: wrap; align-items: flex-end; }
     .col { flex: 1; min-width: 180px; }
     label { display: block; font-size: 12px; font-weight: 600; color: var(--muted); margin-bottom: 4px; }
-    input[type="text"], input[type="number"], select, textarea {
+    input[type="text"], input[type="number"], input[type="date"], select, textarea {
       width: 100%;
       padding: 8px 10px;
       border: 1px solid var(--border);
@@ -456,14 +456,14 @@
         <div class="row" style="margin-top:10px;">
           <div class="col">
             <label>起訖日期（開始）</label>
-            <input type="text" id="travelStartDate" placeholder="例如：115/11/20" />
+            <input type="date" id="travelStartDate" onchange="onTravelDateChange()" />
           </div>
           <div class="col">
             <label>起訖日期（結束）</label>
-            <input type="text" id="travelEndDate" placeholder="例如：115/11/20" />
+            <input type="date" id="travelEndDate" onchange="onTravelDateChange()" />
           </div>
           <div class="col">
-            <label>共計天數說明</label>
+            <label>共計天數說明（自動計算，可微調）</label>
             <input type="text" id="travelTotalDaysText" placeholder="例如：共計 1 日 0 時" />
           </div>
         </div>
@@ -1618,12 +1618,48 @@
         plan_name: document.getElementById("travelPlanName").value.trim(),
         purpose: document.getElementById("travelPurpose").value.trim(),
         destination: document.getElementById("travelDestination").value.trim(),
-        start_date: document.getElementById("travelStartDate").value.trim(),
-        end_date: document.getElementById("travelEndDate").value.trim(),
+        start_date: toRocDateStr(document.getElementById("travelStartDate").value.trim()),
+        end_date: toRocDateStr(document.getElementById("travelEndDate").value.trim()),
         total_days_text: document.getElementById("travelTotalDaysText").value.trim(),
         days,
       };
     }
+
+    function toRocDateStr(val) {
+      if (!val) return "";
+      const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(val);
+      if (!m) return val;
+      return `${parseInt(m[1], 10) - 1911}/${m[2]}/${m[3]}`;
+    }
+
+    function onTravelDateChange() {
+      const sEl = document.getElementById("travelStartDate");
+      const eEl = document.getElementById("travelEndDate");
+      if (sEl.value && (!eEl.value || eEl.value < sEl.value)) {
+        eEl.value = sEl.value;
+      }
+      if (sEl.value && eEl.value) {
+        const d1 = new Date(sEl.value + "T00:00:00");
+        const d2 = new Date(eEl.value + "T00:00:00");
+        const diffDays = Math.max(1, Math.round((d2 - d1) / 86400000) + 1);
+        document.getElementById("travelTotalDaysText").value = `共計 ${diffDays} 日 0 時`;
+      }
+      const firstDateInp = document.querySelector("#travelDaysBody tr:first-child .t-date");
+      if (firstDateInp && !firstDateInp.value.trim() && sEl.value) {
+        const [, mm, dd] = sEl.value.split("-");
+        firstDateInp.value = `${mm}/${dd}`;
+      }
+    }
+
+    (function initTravelDates() {
+      const today = new Date();
+      const iso = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;
+      const sEl = document.getElementById("travelStartDate");
+      const eEl = document.getElementById("travelEndDate");
+      if (sEl && !sEl.value) sEl.value = iso;
+      if (eEl && !eEl.value) eEl.value = iso;
+      onTravelDateChange();
+    })();
 
     function showTravelStatus(msg, ok = true) {
       const el = document.getElementById("travelStatus");
