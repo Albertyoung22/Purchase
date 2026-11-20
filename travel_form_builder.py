@@ -280,42 +280,29 @@ _ALIGN_LEFT = Alignment(horizontal="left", vertical="center", wrap_text=True)
 _ALIGN_NUM = Alignment(horizontal="right", vertical="center", wrap_text=False, shrinkToFit=True)
 
 
-def _split_amount_digits(amount: int) -> list[str]:
-    """Split integer NTD into [十萬, 萬, 千, 百, 十, 元, 角, 分] cells."""
+def _split_amount_digits_5(amount: int) -> list[str]:
+    """Split integer NTD into [萬, 千, 百, 十, 元] cells matching the school .doc voucher."""
     if amount <= 0:
-        return ["", "", "", "", "", "0", "0", "0"]
-    s = str(int(amount)).rjust(6, " ")
-    if len(s) > 6:
-        s = s[-6:]
-    return list(s) + ["0", "0"]
+        return ["", "", "", "", "0"]
+    s = str(int(amount)).rjust(5, " ")
+    if len(s) > 5:
+        s = s[-5:]
+    return list(s)
+
+
+def _format_roc_date_phrase(roc_date: str) -> str:
+    """Convert '115/11/21' to '115 年 11 月 21 日', or return raw string."""
+    parts = [p.strip() for p in roc_date.replace("-", "/").split("/") if p.strip()]
+    if len(parts) == 3:
+        return f"{parts[0]} 年 {parts[1]} 月 {parts[2]} 日"
+    return roc_date or "   年   月   日"
 
 
 def build_travel_report_xlsx(report: TravelReport, output_path: Path) -> Path:
-    """Create a print-ready Tainan City Schedule 2 (粘貼憑證用紙 + 出差旅費報告表) .xlsx file."""
+    """Create a print-ready .xlsx matching the school's '國內出差旅費報告表.doc' A4 portrait format."""
     wb = openpyxl.Workbook()
     ws = wb.active
-    ws.title = "出差旅費報告表"
-
-    # 15 columns (A..O) matching official 附表二
-    col_widths = {
-        "A": 7.5,  # 年月日
-        "B": 15.0,  # 起訖地點
-        "C": 17.0,  # 工作摘要
-        "D": 7.5,  # 火車費
-        "E": 8.5,  # 飛機及高鐵
-        "F": 8.5,  # 汽車及捷運
-        "G": 6.5,  # 船舶
-        "H": 7.5,  # 公共自行車
-        "I": 9.5,  # 駕駛自用或租賃汽車
-        "J": 9.5,  # 駕駛自用或租賃機車
-        "K": 8.5,  # 住宿費
-        "L": 7.5,  # 雜費
-        "M": 7.5,  # 單據號數
-        "N": 9.5,  # 總計
-        "O": 16.0,  # 備註
-    }
-    for col_l, w in col_widths.items():
-        ws.column_dimensions[col_l].width = w
+    ws.title = "國內出差旅費報告表"
 
     is_same_day = bool(report.start_date and report.start_date == report.end_date) or len(report.days) == 1
     computed_days = [
@@ -325,240 +312,227 @@ def build_travel_report_xlsx(report: TravelReport, output_path: Path) -> Path:
     grand_total = sum(cd.subtotal for cd in computed_days)
     total_receipts = sum(cd.receipt_count for cd in computed_days)
 
-    # --- Top Voucher Section: 粘貼憑證用紙 (Rows 1-7) ---
-    ws.merge_cells("A1:O1")
+    num_day_cols = max(6, len(computed_days))
+    total_col_idx = 3 + num_day_cols  # A,B = labels; C.. = days; last = 合計
+    last_col_letter = get_column_letter(total_col_idx)
+
+    # Column widths tuned for A4 portrait
+    ws.column_dimensions["A"].width = 6.5
+    ws.column_dimensions["B"].width = 13.5
+    for idx in range(num_day_cols):
+        ws.column_dimensions[get_column_letter(3 + idx)].width = 11.5
+    ws.column_dimensions[last_col_letter].width = 10.5
+
+    # --- Top Voucher Section: 採購（費用動支）申請單暨粘貼憑證用紙 ---
+    ws.merge_cells(f"A1:{last_col_letter}1")
     ws["A1"] = report.school_name
     ws["A1"].font = _FONT_TITLE
     ws["A1"].alignment = _ALIGN_CENTER
     ws.row_dimensions[1].height = 22
 
-    ws.merge_cells("A2:O2")
-    ws["A2"] = "粘貼憑證用紙"
-    ws["A2"].font = _FONT_SUB
+    ws.merge_cells(f"A2:{last_col_letter}2")
+    ws["A2"] = "採購（費用動支）申請單暨粘貼憑證用紙"
+    ws["A2"].font = _FONT_TITLE
     ws["A2"].alignment = _ALIGN_CENTER
-    ws.row_dimensions[2].height = 20
+    ws.row_dimensions[2].height = 22
 
-    ws.merge_cells("A3:C4")
-    ws["A3"] = "憑單編號：旅字第      號"
-    ws.merge_cells("D3:E4")
-    ws["D3"] = "預  算  科  目"
-    ws.merge_cells("F3:M3")
-    ws["F3"] = "金       額"
-    ws.merge_cells("N3:O3")
-    ws["N3"] = "（此欄由主計室填用）"
+    ws.merge_cells("A3:E3")
+    ws["A3"] = "傳票(付款憑單)編號："
+    ws["A3"].font = _FONT_BODY
+    ws["A3"].alignment = _ALIGN_LEFT
+    ws.merge_cells(f"F3:{last_col_letter}3")
+    ws["F3"] = "簽證編號："
+    ws["F3"].font = _FONT_BODY
+    ws["F3"].alignment = _ALIGN_LEFT
+    ws.row_dimensions[3].height = 18
 
-    digit_labels = ["十萬", "萬", "千", "百", "十", "元", "角", "分"]
-    for idx, lbl in enumerate(digit_labels):
-        ws.cell(4, 6 + idx, lbl)
+    # Voucher table (Rows 4-6)
+    amt_start_idx = total_col_idx - 4  # 5 columns for 萬 千 百 十 元
+    amt_start_l = get_column_letter(amt_start_idx)
+    budget_end_l = get_column_letter(amt_start_idx - 1)
 
-    ws.merge_cells("N4:O5")
-    ws["N4"] = "預借旅費：$"
+    ws.merge_cells("A4:A5")
+    ws["A4"] = "憑證編號"
+    ws.merge_cells(f"B4:{budget_end_l}5")
+    ws["B4"] = "預   算   科   目"
+    ws.merge_cells(f"{amt_start_l}4:{last_col_letter}4")
+    ws[f"{amt_start_l}4"] = "金        額"
+    for idx, lbl in enumerate(["萬", "千", "百", "十", "元"]):
+        ws.cell(5, amt_start_idx + idx, lbl)
 
-    ws.merge_cells("A5:C5")
-    ws["A5"] = "傳  票  號  碼："
-    ws.merge_cells("D5:E5")
-    ws["D5"] = f"業務計畫：{report.plan_name}"
-    ws.merge_cells("A6:C6")
-    ws["A6"] = "  月  日  支      號"
-    ws.merge_cells("D6:E6")
-    ws["D6"] = f"工作計畫／用途別：{report.budget_code} {report.work_plan or report.level1_3}".strip()
-    ws.merge_cells("N6:O6")
-    ws["N6"] = "預算控制登記："
+    ws["A6"] = report.budget_code
+    ws.merge_cells(f"B6:{budget_end_l}6")
+    is_agency = bool(report.budget_code and report.budget_code[0].upper() in ("L", "R", "T", "E"))
+    chk_reg = "□" if is_agency else "☑"
+    chk_ag = "☑" if is_agency else "□"
+    plan_extra = f"（{report.plan_name}）" if report.plan_name else ""
+    ws["B6"] = (
+        f"計劃名稱：{chk_reg}各校經常門分支計畫{chk_ag}應付代收款{plan_extra}\n"
+        f"一級用途別：  服務費用  \n"
+        f"用  途  別：  旅運費--國內旅費"
+    )
+    for idx, dv in enumerate(_split_amount_digits_5(grand_total)):
+        ws.cell(6, amt_start_idx + idx, dv)
 
-    digits_vals = _split_amount_digits(grand_total)
-    for idx, dv in enumerate(digits_vals):
-        ws.merge_cells(start_row=5, start_column=6 + idx, end_row=6, end_column=6 + idx)
-        ws.cell(5, 6 + idx, dv)
-
-    for r in range(3, 7):
-        ws.row_dimensions[r].height = 19
-        for c in range(1, 16):
+    ws.row_dimensions[4].height = 18
+    ws.row_dimensions[5].height = 18
+    ws.row_dimensions[6].height = 48
+    for r in range(4, 7):
+        for c in range(1, total_col_idx + 1):
             cell = ws.cell(r, c)
             cell.border = _BORDER_ALL
-            cell.font = _FONT_BOLD if (r == 3 or (r == 4 and 6 <= c <= 13)) else _FONT_BODY
-            cell.alignment = _ALIGN_LEFT if c in (1, 4, 14) and r >= 5 else _ALIGN_CENTER
+            cell.font = _FONT_BOLD if r in (4, 5) else _FONT_BODY
+            cell.alignment = _ALIGN_LEFT if (r == 6 and c == 2) else _ALIGN_CENTER
 
-    ws.merge_cells("A7:O7")
-    ws["A7"] = "（檢附單據粘貼處）"
-    ws["A7"].font = _FONT_SMALL
+    # --- Main Report Title (Rows 7-8) ---
+    ws.merge_cells(f"A7:{last_col_letter}7")
+    ws["A7"] = f"{report.school_name}國內出差旅費報告表"
+    ws["A7"].font = _FONT_TITLE
     ws["A7"].alignment = _ALIGN_CENTER
-    ws.row_dimensions[7].height = 16
+    ws.row_dimensions[7].height = 24
 
-    # --- Main Report Title & Info (Rows 8-12) ---
-    ws.merge_cells("A8:O8")
-    ws["A8"] = "出差旅費報告表"
-    ws["A8"].font = _FONT_SUB
-    ws["A8"].alignment = _ALIGN_CENTER
-    ws.row_dimensions[8].height = 22
+    ws.merge_cells(f"A8:{last_col_letter}8")
+    ws["A8"] = "第  1  頁共  1  頁"
+    ws["A8"].font = _FONT_BODY
+    ws["A8"].alignment = Alignment(horizontal="right", vertical="center")
+    ws.row_dimensions[8].height = 18
 
-    ws["A9"] = "姓名"
-    ws.merge_cells("B9:D9")
-    ws["B9"] = report.traveler_name
+    # --- Header Info Rows (Rows 9-11) ---
+    ws.merge_cells("A9:B9")
+    ws["A9"] = "姓      名"
+    ws.merge_cells("C9:D9")
+    ws["C9"] = report.traveler_name
     ws["E9"] = "職稱"
-    ws.merge_cells("F9:H9")
     ws["F9"] = report.job_title
-    ws["I9"] = "職等"
-    ws.merge_cells("J9:O9")
-    ws["J9"] = report.rank_level
+    ws["G9"] = "職等"
+    ws.merge_cells(f"H9:{last_col_letter}9")
+    ws["H9"] = report.rank_level
 
-    ws["A10"] = "出差事由"
-    ws.merge_cells("B10:O10")
-    ws["B10"] = report.purpose
+    ws.merge_cells("A10:B10")
+    ws["A10"] = "出  差  事  由"
+    ws.merge_cells(f"C10:{last_col_letter}10")
+    ws["C10"] = report.purpose
 
-    ws["A11"] = "出差地點"
-    ws.merge_cells("B11:O11")
-    ws["B11"] = report.destination
+    ws.merge_cells(f"A11:{last_col_letter}11")
+    s_phrase = _format_roc_date_phrase(report.start_date)
+    e_phrase = _format_roc_date_phrase(report.end_date)
+    days_phrase = report.total_days_text or f"共計 {len(computed_days)} 日"
+    ws["A11"] = f"中華民國 {s_phrase} 起至 {e_phrase} 止  {days_phrase}  附單據  {total_receipts}  張"
 
-    ws["A12"] = "起訖日期"
-    ws.merge_cells("B12:K12")
-    date_span = f"{report.start_date} 起至 {report.end_date} 止".strip()
-    if report.total_days_text:
-        date_span = f"{date_span}（{report.total_days_text}）"
-    ws["B12"] = date_span
-    ws.merge_cells("L12:O12")
-    ws["L12"] = f"附單據  {total_receipts}  張"
-
-    for r in range(9, 13):
-        ws.row_dimensions[r].height = 20
-        for c in range(1, 16):
+    for r in range(9, 12):
+        ws.row_dimensions[r].height = 22
+        for c in range(1, total_col_idx + 1):
             cell = ws.cell(r, c)
             cell.border = _BORDER_ALL
-            cell.font = _FONT_BOLD if c in (1, 5, 9) and r == 9 or c == 1 else _FONT_BODY
-            cell.alignment = _ALIGN_LEFT if c > 1 and r >= 10 else _ALIGN_CENTER
+            cell.font = _FONT_BOLD if (r in (9, 10) and c in (1, 5, 7)) else _FONT_BODY
+            cell.alignment = _ALIGN_LEFT if (r == 10 and c >= 3) else _ALIGN_CENTER
 
-    # --- Table Header (Rows 13-14) ---
-    ws.merge_cells("A13:A14")
-    ws["A13"] = "年月日"
-    ws.merge_cells("B13:B14")
-    ws["B13"] = "起訖地點"
-    ws.merge_cells("C13:C14")
-    ws["C13"] = "工作摘要"
-    ws.merge_cells("D13:J13")
-    ws["D13"] = "交        通        費"
-    sub_headers = ["火車費", "飛機及高鐵", "汽車及捷運", "船舶", "公共自行車", "駕駛自用或租賃汽車", "駕駛自用或租賃機車"]
-    for idx, sh in enumerate(sub_headers):
-        ws.cell(14, 4 + idx, sh)
-    ws.merge_cells("K13:K14")
-    ws["K13"] = "住宿費"
-    ws.merge_cells("L13:L14")
-    ws["L13"] = "雜費"
-    ws.merge_cells("M13:M14")
-    ws["M13"] = "單據號數"
-    ws.merge_cells("N13:N14")
-    ws["N13"] = "總計"
-    ws.merge_cells("O13:O14")
-    ws["O13"] = "備註"
+    # --- Transposed Expense Table (Rows 12-23) ---
+    # Row 12: 月日 | Day 1..N | 合計
+    ws.merge_cells("A12:B12")
+    ws["A12"] = "月  /  日"
+    for idx, cd in enumerate(computed_days):
+        ws.cell(12, 3 + idx, cd.date)
+    ws.cell(12, total_col_idx, "合計")
+    ws.row_dimensions[12].height = 22
 
-    ws.row_dimensions[13].height = 18
+    # Row 13: 起訖地點
+    ws.merge_cells("A13:B13")
+    ws["A13"] = "起訖地點"
+    for idx, cd in enumerate(computed_days):
+        ws.cell(13, 3 + idx, cd.route_text)
+    ws.row_dimensions[13].height = 30
+
+    # Row 14: 工作記要
+    ws.merge_cells("A14:B14")
+    ws["A14"] = "工作記要"
+    for idx, cd in enumerate(computed_days):
+        ws.cell(14, 3 + idx, cd.summary)
     ws.row_dimensions[14].height = 30
-    for r in (13, 14):
-        for c in range(1, 16):
+
+    # Rows 15-18: 交通費 (4 rows)
+    ws.merge_cells("A15:A18")
+    ws["A15"] = "交\n通\n費"
+    has_hsr = any(cd.flight_hsr_fare > 0 for cd in computed_days)
+    has_car_bus = any((cd.bus_mrt_fare + cd.ubike_fare + cd.self_car_fare + cd.self_scooter_fare) > 0 for cd in computed_days)
+    ws["B15"] = f"□飛機{'☑' if has_hsr else '□'}高鐵"
+    ws["B16"] = f"{'☑' if has_car_bus else '□'}汽車□捷運"
+    ws["B17"] = "火車"
+    ws["B18"] = "輪船"
+
+    for idx, cd in enumerate(computed_days):
+        col_c = 3 + idx
+        car_bus_sum = cd.bus_mrt_fare + cd.ubike_fare + cd.self_car_fare + cd.self_scooter_fare
+        ws.cell(15, col_c, cd.flight_hsr_fare or None)
+        ws.cell(16, col_c, car_bus_sum or None)
+        ws.cell(17, col_c, cd.train_fare or None)
+        ws.cell(18, col_c, cd.ship_fare or None)
+
+    # Row 19: 住宿費
+    ws.merge_cells("A19:B19")
+    ws["A19"] = "住宿費"
+    for idx, cd in enumerate(computed_days):
+        ws.cell(19, 3 + idx, cd.lodging_fee or None)
+
+    # Row 20: 住宿費加計交通費(旅行業代收轉付)
+    ws.merge_cells("A20:B20")
+    ws["A20"] = "住宿費加計交通費\n(旅行業代收轉付)"
+
+    # Row 21: 雜費
+    ws.merge_cells("A21:B21")
+    ws["A21"] = "雜費"
+    for idx, cd in enumerate(computed_days):
+        ws.cell(21, 3 + idx, cd.misc_fee or None)
+
+    # Row 22: 總計
+    ws.merge_cells("A22:B22")
+    ws["A22"] = "總  計"
+    for idx in range(num_day_cols):
+        col_l = get_column_letter(3 + idx)
+        ws.cell(22, 3 + idx, f"=SUM({col_l}15:{col_l}21)")
+
+    # 合計 column (Col I) formulas for rows 15..22
+    last_day_l = get_column_letter(2 + num_day_cols)
+    for r in range(15, 23):
+        ws.cell(r, total_col_idx, f"=SUM(C{r}:{last_day_l}{r})")
+
+    # Row 23: 備註
+    ws.merge_cells("A23:B23")
+    ws["A23"] = "備  註"
+    for idx, cd in enumerate(computed_days):
+        ws.cell(23, 3 + idx, cd.note)
+
+    row_heights = {15: 22, 16: 22, 17: 22, 18: 22, 19: 22, 20: 28, 21: 22, 22: 24, 23: 34}
+    for r, h in row_heights.items():
+        ws.row_dimensions[r].height = h
+
+    for r in range(12, 24):
+        for c in range(1, total_col_idx + 1):
             cell = ws.cell(r, c)
             cell.border = _BORDER_ALL
-            cell.font = _FONT_BOLD
-            cell.alignment = _ALIGN_CENTER
-
-    # --- Item Rows (Rows 15+) ---
-    start_row = 15
-    min_rows = max(4, len(computed_days))
-    for idx in range(min_rows):
-        r = start_row + idx
-        ws.row_dimensions[r].height = 24
-        if idx < len(computed_days):
-            cd = computed_days[idx]
-            ws[f"A{r}"] = cd.date
-            ws[f"B{r}"] = cd.route_text
-            ws[f"C{r}"] = cd.summary
-            ws[f"D{r}"] = cd.train_fare or None
-            ws[f"E{r}"] = cd.flight_hsr_fare or None
-            ws[f"F{r}"] = cd.bus_mrt_fare or None
-            ws[f"G{r}"] = cd.ship_fare or None
-            ws[f"H{r}"] = cd.ubike_fare or None
-            ws[f"I{r}"] = cd.self_car_fare or None
-            ws[f"J{r}"] = cd.self_scooter_fare or None
-            ws[f"K{r}"] = cd.lodging_fee or None
-            ws[f"L{r}"] = cd.misc_fee or None
-            ws[f"M{r}"] = cd.receipt_no or (cd.receipt_count or None)
-            ws[f"N{r}"] = f"=SUM(D{r}:L{r})"
-            ws[f"O{r}"] = cd.note
-        else:
-            ws[f"N{r}"] = f"=SUM(D{r}:L{r})"
-
-        for c in range(1, 16):
-            cell = ws.cell(r, c)
-            cell.border = _BORDER_ALL
-            cell.font = _FONT_SMALL if c in (2, 3, 15) else _FONT_BODY
-            if (4 <= c <= 12) or c == 14:
+            is_num = (15 <= r <= 22) and (c >= 3)
+            if is_num:
+                cell.font = _FONT_BOLD if (r == 22 or c == total_col_idx) else _FONT_BODY
                 cell.alignment = _ALIGN_NUM
                 cell.number_format = "#,##0"
-            elif c in (2, 3, 15):
+            elif r in (13, 14, 23) and c >= 3:
+                cell.font = _FONT_SMALL
                 cell.alignment = _ALIGN_LEFT
             else:
+                cell.font = _FONT_BOLD if (r == 12 or c <= 2) else _FONT_BODY
                 cell.alignment = _ALIGN_CENTER
 
-    end_row = start_row + min_rows - 1
-    total_row = end_row + 1
-    ws.row_dimensions[total_row].height = 22
+    # --- Bottom Signature Row (Row 24) ---
+    ws.row_dimensions[24].height = 30
+    ws.merge_cells(f"A24:{last_col_letter}24")
+    ws["A24"] = "出差人              單位主管              人事單位              會計單位              基金主持人"
+    ws["A24"].font = _FONT_BOLD
+    ws["A24"].alignment = _ALIGN_LEFT
 
-    ws.merge_cells(f"A{total_row}:C{total_row}")
-    ws[f"A{total_row}"] = "合        計"
-    ws[f"A{total_row}"].font = _FONT_BOLD
-    ws[f"A{total_row}"].alignment = _ALIGN_CENTER
-
-    for col_idx in list(range(4, 13)) + [14]:
-        col_l = get_column_letter(col_idx)
-        cell = ws[f"{col_l}{total_row}"]
-        cell.value = f"=SUM({col_l}{start_row}:{col_l}{end_row})"
-        cell.font = _FONT_BOLD
-        cell.alignment = _ALIGN_NUM
-        cell.number_format = "#,##0"
-
-    for c in range(1, 16):
-        ws.cell(total_row, c).border = _BORDER_ALL
-
-    # Grand total uppercase row
-    upper_row = total_row + 1
-    ws.row_dimensions[upper_row].height = 20
-    ws.merge_cells(f"A{upper_row}:O{upper_row}")
-    ws[f"A{upper_row}"] = f"總計（大寫）：{amount_to_chinese_upper(grand_total)}（NT$ {grand_total:,}）"
-    ws[f"A{upper_row}"].font = _FONT_BOLD
-    ws[f"A{upper_row}"].alignment = _ALIGN_LEFT
-    for c in range(1, 16):
-        ws.cell(upper_row, c).border = _BORDER_ALL
-
-    # --- Approval Signature Block (2 rows matching official 附表二) ---
-    sig_r1 = upper_row + 1
-    sig_r2 = upper_row + 2
-    ws.row_dimensions[sig_r1].height = 28
-    ws.row_dimensions[sig_r2].height = 28
-
-    ws.merge_cells(f"A{sig_r1}:C{sig_r1}")
-    ws[f"A{sig_r1}"] = "出差人："
-    ws.merge_cells(f"D{sig_r1}:F{sig_r1}")
-    ws[f"D{sig_r1}"] = "科長："
-    ws.merge_cells(f"G{sig_r1}:K{sig_r1}")
-    ws[f"G{sig_r1}"] = "單位主管："
-    ws.merge_cells(f"L{sig_r1}:O{sig_r2}")
-    ws[f"L{sig_r1}"] = "機關首長（校長）："
-
-    ws.merge_cells(f"A{sig_r2}:C{sig_r2}")
-    ws[f"A{sig_r2}"] = "人事單位（出差日期及職級核符）："
-    ws.merge_cells(f"D{sig_r2}:F{sig_r2}")
-    ws[f"D{sig_r2}"] = "主計承辦人："
-    ws.merge_cells(f"G{sig_r2}:K{sig_r2}")
-    ws[f"G{sig_r2}"] = "主計單位主管："
-
-    for r in (sig_r1, sig_r2):
-        for c in range(1, 16):
-            cell = ws.cell(r, c)
-            cell.border = _BORDER_ALL
-            cell.font = _FONT_SMALL
-            cell.alignment = _ALIGN_LEFT
-
-    # Single-page A4 landscape print setup
-    ws.print_area = f"A1:O{sig_r2}"
+    # Single-page A4 portrait print setup matching the .doc template
+    ws.print_area = f"A1:{last_col_letter}24"
     ws.page_setup.paperSize = ws.PAPERSIZE_A4
-    ws.page_setup.orientation = ws.ORIENTATION_LANDSCAPE
+    ws.page_setup.orientation = ws.ORIENTATION_PORTRAIT
     ws.page_setup.fitToWidth = 1
     ws.page_setup.fitToHeight = 1
     ws.page_setup.scale = None

@@ -98,23 +98,24 @@ class TestTravelFormBuilder(unittest.TestCase):
             self.assertTrue(out_path.exists())
 
             wb = openpyxl.load_workbook(out_path, data_only=False)
-            ws = wb["出差旅費報告表"]
-            self.assertEqual(ws["A2"].value, "粘貼憑證用紙")
-            self.assertEqual(ws["B9"].value, "李小華")
-            # Day 1 (row 15): HSR 1350, Lodging capped at 3500, Misc 300 (>60km)
-            self.assertEqual(ws["E15"].value, 1350)
-            self.assertEqual(ws["K15"].value, 3500)
-            self.assertEqual(ws["L15"].value, 300)
-            self.assertEqual(ws["N15"].value, "=SUM(D15:L15)")
-            self.assertIn("3500元", ws["O15"].value)
-            # Day 2 (row 16): Holiday lodging capped at 4500
-            self.assertEqual(ws["K16"].value, 4500)
-            self.assertIn("4500元", ws["O16"].value)
+            ws = wb["國內出差旅費報告表"]
+            self.assertEqual(ws["A2"].value, "採購（費用動支）申請單暨粘貼憑證用紙")
+            self.assertEqual(ws["C9"].value, "李小華")
+            # Day 1 (col C): HSR 1350 (row 15), Lodging capped at 3500 (row 19), Misc 300 (row 21)
+            self.assertEqual(ws["C15"].value, 1350)
+            self.assertEqual(ws["C19"].value, 3500)
+            self.assertEqual(ws["C21"].value, 300)
+            self.assertEqual(ws["C22"].value, "=SUM(C15:C21)")
+            self.assertIn("3500元", ws["C23"].value)
+            # Day 2 (col D): Holiday lodging capped at 4500
+            self.assertEqual(ws["D19"].value, 4500)
+            self.assertIn("4500元", ws["D23"].value)
+            # Row total formulas in Col I
+            self.assertEqual(ws["I15"].value, "=SUM(C15:H15)")
+            self.assertEqual(ws["I22"].value, "=SUM(C22:H22)")
             # Numeric cells have shrinkToFit enabled to avoid ###
-            self.assertTrue(ws["E15"].alignment.shrinkToFit)
-            self.assertFalse(ws["E15"].alignment.wrapText)
-            # Grand total: (1350+3500+300) + (1350+4500+300) = 11300
-            self.assertIn("新台幣壹萬壹仟參佰元整", ws["A20"].value)
+            self.assertTrue(ws["C15"].alignment.shrinkToFit)
+            self.assertFalse(ws["C15"].alignment.wrapText)
 
     def test_taxi_requires_approval_and_under_5km_zero_misc(self) -> None:
         report = TravelReport()
