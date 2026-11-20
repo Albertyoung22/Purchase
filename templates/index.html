@@ -434,7 +434,7 @@
             <input type="number" id="travelScooterRate" step="0.05" value="2" />
           </div>
         </div>
-        <div class="row" style="margin-top:10px;">
+        <div class="row" style="margin-top:10px; align-items:flex-start;">
           <div class="col">
             <label>預算科目代碼（共用系統代碼）</label>
             <select id="travelBudgetCodeSelect" onchange="onTravelBudgetSelect()"></select>
@@ -506,20 +506,20 @@
           也可直接在表格「起訖地點」輸入 <code>土城高中 -&gt; 教育局</code> 後點該列「算里程」，或手動指定 <code>A-&gt;B:14, B-&gt;A:14</code>。
         </p>
         <div style="overflow-x:auto;">
-          <table id="travelDaysTable">
+          <table id="travelDaysTable" style="font-size:12px;">
             <thead>
               <tr>
-                <th style="min-width:75px;">月日</th>
-                <th style="min-width:140px;">交通方式</th>
-                <th style="min-width:220px;">起訖地點 / 順路里程 (A-&gt;B:km)</th>
-                <th style="min-width:80px;">單程km</th>
-                <th style="min-width:90px;">車資/客運比照</th>
-                <th style="min-width:85px;">住宿費</th>
-                <th style="min-width:65px;">假日宿</th>
-                <th style="min-width:80px;">雜費(留空自動)</th>
-                <th style="min-width:65px;">單據數</th>
-                <th style="min-width:150px;">工作摘要</th>
-                <th>操作</th>
+                <th style="width:64px;">月日</th>
+                <th style="width:125px;">交通方式</th>
+                <th style="min-width:170px;">起訖地點 / 里程</th>
+                <th style="width:62px;">單程km</th>
+                <th style="width:74px;">車資/比照</th>
+                <th style="width:68px;">住宿費</th>
+                <th style="width:48px;">假日</th>
+                <th style="width:66px;">雜費</th>
+                <th style="width:48px;">單據</th>
+                <th style="min-width:110px;">工作摘要</th>
+                <th style="width:92px;">操作</th>
               </tr>
             </thead>
             <tbody id="travelDaysBody"></tbody>
@@ -1563,7 +1563,16 @@
       }
       targetRow.querySelector(".t-route").value = data.segments_text;
       targetRow.querySelector(".t-km").value = data.one_way_km;
+
+      const destEl = document.getElementById("travelDestination");
+      if (destEl && !destEl.value.trim()) {
+        const origin = travelStops[0];
+        const dests = [...new Set(travelStops.slice(1).filter(s => s !== origin))];
+        if (dests.length) destEl.value = dests.join("、");
+      }
+
       showTravelStatus("已將智慧計算里程填入出差行程表！");
+      previewTravel();
     }
 
     resetTravelStops();
