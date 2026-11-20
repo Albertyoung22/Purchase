@@ -513,6 +513,17 @@ class TestDesktopApp(unittest.TestCase):
             self.assertEqual(data["one_way_km"], 19.5)
             self.assertIn("土城高中->教育局:14.5", data["segments_text"])
 
+        # Re-calculating an already formatted segments_text with ':km' suffixes
+        with patch("travel_distance._osrm_driving_legs", return_value=[62.2, 62.2]):
+            res_recalc = self.client.post(
+                "/api/travel/calc-route",
+                json={"stops": "土城高中->白河商工:62.2, 白河商工->土城高中:62.2", "round_trip": False},
+            )
+            data_recalc = res_recalc.get_json()
+            self.assertTrue(data_recalc["ok"])
+            self.assertEqual(data_recalc["stops"], ["土城高中", "白河商工", "土城高中"])
+            self.assertEqual(data_recalc["total_km"], 124.4)
+
         # Fallback when OSRM is unavailable
         with patch("travel_distance._osrm_driving_legs", return_value=None):
             res_fb = self.client.post(

@@ -124,8 +124,14 @@ def _osrm_driving_legs(coords: list[tuple[float, float]], *, timeout_sec: float 
 
 
 def parse_stops_text(raw: str) -> list[str]:
-    """Split 'A -> B -> C' or 'A, B, C' into a clean list of stops."""
-    parts = [p.strip() for p in re.split(r"(?:->|→|,|，|、|;|；)+", raw) if p.strip()]
+    """Split 'A -> B -> C' or 'A->B:62.2, B->A:62.2' into a clean list of stops."""
+    parts: list[str] = []
+    for chunk in re.split(r"(?:->|→|,|，|、|;|；)+", raw):
+        cleaned = re.sub(r"\s*[:：]\s*\d+(?:\.\d+)?\s*(?:km|公里)?\s*$", "", chunk, flags=re.IGNORECASE).strip()
+        if not cleaned:
+            continue
+        if not parts or parts[-1] != cleaned:
+            parts.append(cleaned)
     return parts
 
 
