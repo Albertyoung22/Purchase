@@ -37,6 +37,7 @@ from fill_purchase_forms import (
 from form_builder import BUDGET_CODE_MAP
 from history_store import (
     append_history,
+    build_history_entries,
     clear_history,
     delete_history_record,
     export_history_csv_bytes,
@@ -447,6 +448,11 @@ def api_inspect_template():
 
 @app.post("/api/save-config")
 def api_save_config():
+    if _is_cloud_mode():
+        return jsonify({
+            "ok": False,
+            "error": "雲端模式下不修改伺服器共用設定，請於瀏覽器本機儲存個人設定。",
+        }), 403
     try:
         data = request.get_json(force=True)
         parsed = json.loads(data["config_text"])
@@ -577,11 +583,22 @@ def _prepare_requests_from_payload(payload: dict[str, Any], cfg: dict[str, Any])
     return chunk_requests_by_max_rows(reqs, max_rows=max_rows)
 
 
+def _resolve_request_config(payload: dict[str, Any]) -> dict[str, Any]:
+    """Load base config.json and apply optional per-user custom_config override from browser."""
+    cfg = load_config(CONFIG_PATH)
+    custom = payload.get("custom_config")
+    if isinstance(custom, dict):
+        merged = dict(cfg)
+        merged.update(custom)
+        return merged
+    return cfg
+
+
 @app.post("/api/preview")
 def api_preview():
     try:
         payload = request.get_json(force=True)
-        cfg = load_config(CONFIG_PATH)
+        cfg = _resolve_request_config(payload)
         reqs = _prepare_requests_from_payload(payload, cfg)
         return jsonify({"ok": True, "requests": _serialize_requests(reqs)})
     except Exception as exc:
@@ -593,15 +610,20 @@ def api_generate():
     try:
         tpl = _active_template_path()
         payload = request.get_json(force=True)
-        cfg = load_config(CONFIG_PATH)
+        cfg = _resolve_request_config(payload)
         reqs = _prepare_requests_from_payload(payload, cfg)
 
         files = generate_from_requests(tpl, reqs, OUTPUT_DIR, cfg)
-        append_history(HISTORY_PATH, reqs, files)
+        if _is_cloud_mode():
+            # In multi-user cloud mode, keep history strictly on the user's own browser (localStorage).
+            history_entries = build_history_entries(reqs, files)
+        else:
+            history_entries = append_history(HISTORY_PATH, reqs, files)
         return jsonify({
             "ok": True,
             "files": [f.name for f in files],
             "requests": _serialize_requests(reqs),
+            "history_entries": history_entries,
         })
     except Exception as exc:
         return jsonify({"ok": False, "error": str(exc)}), 400
@@ -639,7 +661,7 @@ def api_print_preview():
     try:
         tpl = _active_template_path()
         payload = request.get_json(force=True)
-        cfg = load_config(CONFIG_PATH)
+        cfg = _resolve_request_config(payload)
         reqs = _prepare_requests_from_payload(payload, cfg)
 
         preview_dir = OUTPUT_DIR / "_preview"
@@ -703,6 +725,13 @@ def api_sample_csv():
 
 @app.get("/api/history")
 def api_get_history():
+    if _is_cloud_mode():
+        return jsonify({
+            "ok": True,
+            "cloud_local_only": True,
+            "records": [],
+            "summary": summarize_history([]),
+        })
     records = load_history(HISTORY_PATH)
     return jsonify({
         "ok": True,
@@ -713,6 +742,8 @@ def api_get_history():
 
 @app.delete("/api/history/<record_id>")
 def api_delete_history(record_id: str):
+    if _is_cloud_mode():
+        return jsonify({"ok": True, "cloud_local_only": True, "records": [], "summary": summarize_history([])})
     deleted = delete_history_record(HISTORY_PATH, record_id)
     if not deleted:
         return jsonify({"ok": False, "error": "找不到該筆紀錄"}), 404
@@ -722,13 +753,15 @@ def api_delete_history(record_id: str):
 
 @app.post("/api/history/clear")
 def api_clear_history():
+    if _is_cloud_mode():
+        return jsonify({"ok": True, "cloud_local_only": True, "records": [], "summary": summarize_history([])})
     clear_history(HISTORY_PATH)
     return jsonify({"ok": True, "records": [], "summary": summarize_history([])})
 
 
 @app.get("/api/history/export")
 def api_export_history():
-    records = load_history(HISTORY_PATH)
+    records = [] if _is_cloud_mode() else load_history(HISTORY_PATH)
     csv_bytes = export_history_csv_bytes(records)
     return send_file(
         io.BytesIO(csv_bytes),

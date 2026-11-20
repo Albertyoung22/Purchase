@@ -405,6 +405,52 @@ class TestDesktopApp(unittest.TestCase):
             self.assertEqual(res_open.status_code, 403)
             self.assertFalse(res_open.get_json()["ok"])
 
+            res_cfg = self.client.post("/api/save-config", json={"config_text": "{}"})
+            self.assertEqual(res_cfg.status_code, 403)
+            self.assertFalse(res_cfg.get_json()["ok"])
+
+    def test_cloud_mode_isolates_history_and_prefs_to_browser(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_dir = Path(tmp)
+            out_dir = tmp_dir / "output"
+            hist_path = tmp_dir / "history.json"
+            with (
+                patch.dict(os.environ, {"PORT": "8080"}),
+                patch.object(web_app, "_active_template_path", return_value=None),
+                patch.object(web_app, "OUTPUT_DIR", out_dir),
+                patch.object(web_app, "HISTORY_PATH", hist_path),
+            ):
+                # Index page exposes IS_CLOUD = true & localStorage persistence
+                idx_html = self.client.get("/").get_data(as_text=True)
+                self.assertIn("const IS_CLOUD = true;", idx_html)
+                self.assertIn("purchase_user_prefs_v1", idx_html)
+                self.assertIn("purchase_history_v1", idx_html)
+
+                # Generating in cloud mode returns history_entries for client localStorage,
+                # and MUST NOT write server-side history.json
+                gen_res = self.client.post(
+                    "/api/generate",
+                    json={
+                        "mode": "manual",
+                        "budget_code": "321",
+                        "department": "教務處",
+                        "payer_name": "王小明",
+                        "purpose": "雲端個人測試",
+                        "items": [{"name": "白板筆", "quantity": 3, "unit_price": 40}],
+                    },
+                )
+                gen_data = gen_res.get_json()
+                self.assertTrue(gen_data["ok"])
+                self.assertEqual(len(gen_data["history_entries"]), 1)
+                self.assertEqual(gen_data["history_entries"][0]["payer_name"], "王小明")
+                self.assertFalse(hist_path.exists())
+
+                # /api/history in cloud mode never returns shared server records
+                h_data = self.client.get("/api/history").get_json()
+                self.assertTrue(h_data["ok"])
+                self.assertTrue(h_data["cloud_local_only"])
+                self.assertEqual(h_data["records"], [])
+
     def test_invoice_text_auto_split_preserves_over_max_rows_items(self) -> None:
         lines = ["AB-99887766", "2026-11-19"]
         for i in range(1, 15):

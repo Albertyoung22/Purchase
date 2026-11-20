@@ -34,12 +34,11 @@ def _save_history(history_path: Path, records: list[dict[str, Any]]) -> None:
     history_path.write_text(json.dumps(records, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
-def append_history(
-    history_path: Path,
+def build_history_entries(
     requests: list[PurchaseRequest],
     files: list[Path],
 ) -> list[dict[str, Any]]:
-    """Append newly generated PurchaseRequest records to the cumulative history file."""
+    """Build serializable history entry dicts for newly generated PurchaseRequests."""
     now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     new_entries: list[dict[str, Any]] = []
 
@@ -62,6 +61,16 @@ def append_history(
             "items_summary": item_names,
             "output_file": out_file.name,
         })
+    return new_entries
+
+
+def append_history(
+    history_path: Path,
+    requests: list[PurchaseRequest],
+    files: list[Path],
+) -> list[dict[str, Any]]:
+    """Append newly generated PurchaseRequest records to the cumulative history file."""
+    new_entries = build_history_entries(requests, files)
 
     with _LOCK:
         existing = []

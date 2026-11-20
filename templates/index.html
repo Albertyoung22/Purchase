@@ -371,12 +371,20 @@
     <div id="view-history" class="main-view">
     <div class="card">
       <div class="card-title">
-        <span>累積採購紀錄與彙整統計</span>
-        <div style="display:flex; gap:8px;">
-          <a href="/api/history/export" style="padding:6px 12px; background:#0f766e; color:#fff; border-radius:6px; text-decoration:none; font-size:12px; font-weight:600;">匯出累積報表 (.csv)</a>
+        <span>
+          累積採購紀錄與彙整統計
+          {% if is_cloud %}
+          <span class="badge ok" style="margin-left:8px;">🔒 本機瀏覽器儲存（個人隱私隔離）</span>
+          {% endif %}
+        </span>
+        <div style="display:flex; gap:8px; flex-wrap:wrap;">
+          <button class="accent" onclick="exportHistoryCsv()" style="font-size:12px; padding:6px 12px;">匯出累積報表 (.csv)</button>
+          <button class="secondary" onclick="exportPersonalBackup()" style="font-size:12px; padding:6px 10px;">備份設定與紀錄 (.json)</button>
+          <button class="secondary" onclick="document.getElementById('backupImportFile').click()" style="font-size:12px; padding:6px 10px;">匯入備份 (.json)</button>
           <button class="secondary" onclick="clearHistoryAll()" style="font-size:12px; padding:6px 10px;">清空紀錄</button>
         </div>
       </div>
+      <input type="file" id="backupImportFile" accept=".json" style="display:none;" onchange="importPersonalBackup(this)" />
       <div id="historySummary" style="display:flex; gap:10px; flex-wrap:wrap; margin-bottom:10px;"></div>
       <div style="max-height:560px; overflow-y:auto;">
         <table id="historyTable">
@@ -393,6 +401,20 @@
 
     <!-- Separate Tab View: Template & Settings -->
     <div id="view-settings" class="main-view">
+    <div class="card">
+      <div class="card-title">
+        <span>個人化設定與本機資料管理</span>
+        <span class="badge ok">🔒 僅存於您的本機瀏覽器（不與他人共用）</span>
+      </div>
+      <p style="margin:0 0 10px; font-size:13px; color:var(--muted);">
+        系統會自動在您目前的瀏覽器記住個人常用欄位（<strong>預算科目代碼、請購單位、代墊人、常用用途、Gemini API Key、自動分單開關與金額上限</strong>）{% if is_cloud %}以及您的<strong>累積採購紀錄</strong>與自訂座標設定{% endif %}，伺服器端不留存任何個人資料。更換電腦時可使用 JSON 備份匯出／匯入。
+      </p>
+      <div style="display:flex; gap:8px; flex-wrap:wrap;">
+        <button class="accent" onclick="exportPersonalBackup()">匯出個人設定與紀錄備份 (.json)</button>
+        <button class="secondary" onclick="document.getElementById('backupImportFile').click()">匯入個人備份 (.json)</button>
+        <button class="secondary" onclick="resetUserPrefs()">重設個人偏好預設值</button>
+      </div>
+    </div>
     <div class="card">
       <div class="card-title">
         <span>採購申請單暨支出憑證黏存單格式設定</span>
@@ -423,9 +445,79 @@
   </div>
 
   <script>
+    const IS_CLOUD = {{ 'true' if is_cloud else 'false' }};
+    const PREFS_STORAGE_KEY = "purchase_user_prefs_v1";
+    const HISTORY_STORAGE_KEY = "purchase_history_v1";
+    const CONFIG_STORAGE_KEY = "purchase_custom_config_v1";
+
     let currentMode = "scan";
     let budgetMap = {};
     let budgetEntries = [];
+
+    function loadUserPrefs() {
+      try {
+        const raw = localStorage.getItem(PREFS_STORAGE_KEY);
+        if (!raw) return;
+        const prefs = JSON.parse(raw);
+        if (prefs.budget_code !== undefined) document.getElementById("budgetCode").value = prefs.budget_code;
+        if (prefs.department !== undefined) document.getElementById("department").value = prefs.department;
+        if (prefs.payer_name !== undefined) document.getElementById("payerName").value = prefs.payer_name;
+        if (prefs.purpose !== undefined) document.getElementById("purpose").value = prefs.purpose;
+        if (prefs.gemini_api_key !== undefined) document.getElementById("geminiKey").value = prefs.gemini_api_key;
+        if (prefs.auto_split !== undefined) document.getElementById("autoSplit").checked = Boolean(prefs.auto_split);
+        if (prefs.max_amount !== undefined && prefs.max_amount !== "") document.getElementById("maxAmount").value = prefs.max_amount;
+      } catch {}
+      if (IS_CLOUD) {
+        try {
+          const customCfg = localStorage.getItem(CONFIG_STORAGE_KEY);
+          if (customCfg) document.getElementById("configEditor").value = customCfg;
+        } catch {}
+      }
+    }
+
+    function saveUserPrefs() {
+      try {
+        const prefs = {
+          budget_code: document.getElementById("budgetCode").value,
+          department: document.getElementById("department").value,
+          payer_name: document.getElementById("payerName").value,
+          purpose: document.getElementById("purpose").value,
+          gemini_api_key: document.getElementById("geminiKey").value,
+          auto_split: document.getElementById("autoSplit").checked,
+          max_amount: document.getElementById("maxAmount").value,
+        };
+        localStorage.setItem(PREFS_STORAGE_KEY, JSON.stringify(prefs));
+      } catch {}
+    }
+
+    function resetUserPrefs() {
+      if (!confirm("確定要清除本機瀏覽器儲存的個人常用設定嗎？（不會刪除累積採購紀錄）")) return;
+      try {
+        localStorage.removeItem(PREFS_STORAGE_KEY);
+        if (IS_CLOUD) localStorage.removeItem(CONFIG_STORAGE_KEY);
+      } catch {}
+      document.getElementById("budgetCode").value = "321";
+      document.getElementById("department").value = "總務處";
+      document.getElementById("payerName").value = "";
+      document.getElementById("purpose").value = "";
+      document.getElementById("geminiKey").value = "";
+      document.getElementById("autoSplit").checked = false;
+      document.getElementById("maxAmount").value = "3000";
+      onBudgetCodeChange();
+      showStatus("已重設本機個人偏好設定");
+    }
+
+    function bindUserPrefsAutosave() {
+      ["budgetCode", "department", "payerName", "purpose", "geminiKey", "maxAmount"].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) {
+          el.addEventListener("input", saveUserPrefs);
+          el.addEventListener("change", saveUserPrefs);
+        }
+      });
+      const autoSplitEl = document.getElementById("autoSplit");
+      if (autoSplitEl) autoSplitEl.addEventListener("change", saveUserPrefs);
+    }
 
     function populateSelect(selectId, values) {
       const sel = document.getElementById(selectId);
@@ -435,7 +527,10 @@
 
     function syncSelectToInput(selectId, inputId) {
       const val = document.getElementById(selectId).value;
-      if (val) document.getElementById(inputId).value = val;
+      if (val) {
+        document.getElementById(inputId).value = val;
+        saveUserPrefs();
+      }
     }
 
     function setSelectAndInput(selectId, inputId, val) {
@@ -461,6 +556,11 @@
       populateSelect("level1Select", data.level1_options);
       populateSelect("level2Select", data.level2_options);
       populateSelect("level3Select", data.level3_options);
+
+      // Sync dropdown selections with restored local user preferences
+      setSelectAndInput("departmentSelect", "department", document.getElementById("department").value);
+      setSelectAndInput("payerSelect", "payerName", document.getElementById("payerName").value);
+      setSelectAndInput("purposeSelect", "purpose", document.getElementById("purpose").value);
 
       onBudgetCodeChange();
     }
@@ -497,6 +597,8 @@
       }
     }
 
+    loadUserPrefs();
+    bindUserPrefsAutosave();
     loadBudgetOptions();
 
     function switchMainView(viewName, btn) {
@@ -692,6 +794,18 @@
 
     async function saveConfig() {
       const config_text = document.getElementById("configEditor").value;
+      if (IS_CLOUD) {
+        try {
+          const parsed = JSON.parse(config_text);
+          const formatted = JSON.stringify(parsed, null, 2);
+          localStorage.setItem(CONFIG_STORAGE_KEY, formatted);
+          document.getElementById("configEditor").value = formatted;
+          showStatus("個人座標設定已儲存於您的本機瀏覽器（不影響其他使用者）");
+        } catch (err) {
+          showStatus("設定 JSON 格式錯誤：" + err.message, false);
+        }
+        return;
+      }
       const res = await fetch("/api/save-config", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -745,7 +859,7 @@
         subtotal: tr.querySelector(".m-sub").value,
         note: tr.querySelector(".m-note").value,
       }));
-      return {
+      const payload = {
         mode: currentMode === "scan" ? "manual" : currentMode,
         budget_code: document.getElementById("budgetCode").value,
         plan_name: document.getElementById("planName").value,
@@ -765,6 +879,13 @@
         auto_split: document.getElementById("autoSplit").checked,
         max_amount: document.getElementById("maxAmount").value,
       };
+      if (IS_CLOUD) {
+        try {
+          const customCfg = localStorage.getItem(CONFIG_STORAGE_KEY);
+          if (customCfg) payload.custom_config = JSON.parse(customCfg);
+        } catch {}
+      }
+      return payload;
     }
 
     function renderPreview(reqs) {
@@ -889,10 +1010,60 @@
         data.files.map(f => `<a href="/api/download/${encodeURIComponent(f)}">${f}</a>`).join("") +
         (data.files.length > 1 ? `<a href="${zipUrl}" style="background:#ecfdf5; border-color:#a7f3d0; color:#065f46;">全部打包下載 (.zip)</a>` : "");
       showStatus(`成功產出 ${data.files.length} 份 Excel 請購單！`);
+      if (IS_CLOUD && Array.isArray(data.history_entries) && data.history_entries.length) {
+        appendLocalHistory(data.history_entries);
+      }
       await loadHistory();
     }
 
+    function getLocalHistory() {
+      try {
+        const raw = localStorage.getItem(HISTORY_STORAGE_KEY);
+        const parsed = raw ? JSON.parse(raw) : [];
+        return Array.isArray(parsed) ? parsed : [];
+      } catch {
+        return [];
+      }
+    }
+
+    function setLocalHistory(records) {
+      try {
+        localStorage.setItem(HISTORY_STORAGE_KEY, JSON.stringify(records));
+      } catch {}
+    }
+
+    function appendLocalHistory(newEntries) {
+      const existing = getLocalHistory();
+      const updated = [...[...newEntries].reverse(), ...existing];
+      setLocalHistory(updated);
+      return updated;
+    }
+
+    function summarizeLocalHistory(records) {
+      let totalAmount = 0;
+      const byCode = {};
+      records.forEach(r => {
+        const amt = Number(r.total_amount || 0);
+        totalAmount += amt;
+        const code = r.budget_code || "未指定";
+        byCode[code] = (byCode[code] || 0) + amt;
+      });
+      const clean = v => Number.isInteger(v) ? v : Math.round(v * 100) / 100;
+      const cleanByCode = {};
+      Object.entries(byCode).forEach(([k, v]) => { cleanByCode[k] = clean(v); });
+      return {
+        total_count: records.length,
+        total_amount: clean(totalAmount),
+        by_budget_code: cleanByCode,
+      };
+    }
+
     async function loadHistory() {
+      if (IS_CLOUD) {
+        const records = getLocalHistory();
+        renderHistory(records, summarizeLocalHistory(records));
+        return;
+      }
       const res = await fetch("/api/history");
       const data = await res.json();
       if (!data.ok) return;
@@ -903,7 +1074,7 @@
       document.getElementById("historyCountBadge").textContent = summary.total_count ?? records.length;
       const sumBox = document.getElementById("historySummary");
       const byCode = Object.entries(summary.by_budget_code || {})
-        .map(([k, v]) => `<span class="badge">${k}: NT$ ${Number(v).toLocaleString()}</span>`)
+        .map(([k, v]) => `<span class="badge">${escapeHtml(k)}: NT$ ${Number(v).toLocaleString()}</span>`)
         .join(" ");
       sumBox.innerHTML = `
         <span class="badge ok">累積張數：${summary.total_count} 張</span>
@@ -918,23 +1089,29 @@
       }
       tbody.innerHTML = records.map(r => `
         <tr>
-          <td style="white-space:nowrap;">${r.created_at}</td>
-          <td>${r.request_id}</td>
-          <td><span class="badge">${r.source_type}</span></td>
-          <td>${r.budget_code || "-"}</td>
-          <td>${r.department || "-"}</td>
-          <td>${r.payer_name || "-"}</td>
-          <td>${r.purpose ? `<strong>${r.purpose}</strong><br>` : ""}<span style="color:var(--muted); font-size:12px;">${r.items_summary || ""}</span></td>
+          <td style="white-space:nowrap;">${escapeHtml(r.created_at)}</td>
+          <td>${escapeHtml(r.request_id)}</td>
+          <td><span class="badge">${escapeHtml(r.source_type)}</span></td>
+          <td>${escapeHtml(r.budget_code || "-")}</td>
+          <td>${escapeHtml(r.department || "-")}</td>
+          <td>${escapeHtml(r.payer_name || "-")}</td>
+          <td>${r.purpose ? `<strong>${escapeHtml(r.purpose)}</strong><br>` : ""}<span style="color:var(--muted); font-size:12px;">${escapeHtml(r.items_summary || "")}</span></td>
           <td style="text-align:right; font-weight:600;">${Number(r.total_amount || 0).toLocaleString()}</td>
           <td style="white-space:nowrap;">
-            <a href="/api/download/${encodeURIComponent(r.output_file)}" style="font-size:12px; margin-right:6px;">下載</a>
-            <button class="secondary" onclick="deleteHistoryItem('${r.id}')" style="padding:3px 8px; font-size:12px;">刪除</button>
+            ${r.output_file ? `<a href="/api/download/${encodeURIComponent(r.output_file)}" style="font-size:12px; margin-right:6px;">下載</a>` : ""}
+            <button class="secondary" onclick="deleteHistoryItem('${escapeHtml(r.id)}')" style="padding:3px 8px; font-size:12px;">刪除</button>
           </td>
         </tr>
       `).join("");
     }
 
     async function deleteHistoryItem(id) {
+      if (IS_CLOUD) {
+        const filtered = getLocalHistory().filter(r => r.id !== id);
+        setLocalHistory(filtered);
+        renderHistory(filtered, summarizeLocalHistory(filtered));
+        return;
+      }
       const res = await fetch(`/api/history/${encodeURIComponent(id)}`, { method: "DELETE" });
       const data = await res.json();
       if (data.ok) renderHistory(data.records, data.summary);
@@ -942,9 +1119,107 @@
 
     async function clearHistoryAll() {
       if (!confirm("確定要清空所有累積採購紀錄嗎？（已產出的 Excel 檔案不會被刪除）")) return;
+      if (IS_CLOUD) {
+        setLocalHistory([]);
+        renderHistory([], summarizeLocalHistory([]));
+        return;
+      }
       const res = await fetch("/api/history/clear", { method: "POST" });
       const data = await res.json();
       if (data.ok) renderHistory(data.records, data.summary);
+    }
+
+    function _csvCell(val) {
+      const s = String(val ?? "");
+      return /[",\r\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+    }
+
+    function exportHistoryCsv() {
+      if (!IS_CLOUD) {
+        window.location.href = "/api/history/export";
+        return;
+      }
+      const records = getLocalHistory();
+      const headers = [
+        "產出時間", "單號", "資料來源", "預算科目代碼", "計畫名稱",
+        "請購單位", "代墊人", "用途說明", "品項摘要", "品項數", "總金額", "檔案名稱"
+      ];
+      const rows = records.map(r => [
+        r.created_at || "", r.request_id || "", r.source_type || "", r.budget_code || "",
+        r.plan_name || "", r.department || "", r.payer_name || "", r.purpose || "",
+        r.items_summary || "", r.item_count ?? 0, r.total_amount ?? 0, r.output_file || ""
+      ]);
+      const csv = "\uFEFF" + [headers, ...rows].map(row => row.map(_csvCell).join(",")).join("\r\n");
+      const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(blob);
+      a.download = "採購紀錄累積彙整.csv";
+      a.click();
+      URL.revokeObjectURL(a.href);
+    }
+
+    async function exportPersonalBackup() {
+      let historyRecords = [];
+      if (IS_CLOUD) {
+        historyRecords = getLocalHistory();
+      } else {
+        try {
+          const res = await fetch("/api/history");
+          const data = await res.json();
+          if (data.ok) historyRecords = data.records || [];
+        } catch {}
+      }
+      let prefs = {};
+      try { prefs = JSON.parse(localStorage.getItem(PREFS_STORAGE_KEY) || "{}"); } catch {}
+      let customConfig = null;
+      try {
+        const rawCfg = localStorage.getItem(CONFIG_STORAGE_KEY);
+        if (rawCfg) customConfig = JSON.parse(rawCfg);
+      } catch {}
+
+      const bundle = {
+        version: 1,
+        exported_at: new Date().toISOString(),
+        prefs,
+        custom_config: customConfig,
+        history: historyRecords,
+      };
+      const blob = new Blob([JSON.stringify(bundle, null, 2)], { type: "application/json;charset=utf-8;" });
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(blob);
+      a.download = `採購系統個人備份_${new Date().toISOString().slice(0, 10)}.json`;
+      a.click();
+      URL.revokeObjectURL(a.href);
+      showStatus("已匯出個人設定與紀錄備份 (.json)");
+    }
+
+    function importPersonalBackup(input) {
+      const file = input.files && input.files[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = () => {
+        try {
+          const bundle = JSON.parse(String(reader.result || "{}"));
+          if (bundle.prefs && typeof bundle.prefs === "object") {
+            localStorage.setItem(PREFS_STORAGE_KEY, JSON.stringify(bundle.prefs));
+          }
+          if (IS_CLOUD && bundle.custom_config && typeof bundle.custom_config === "object") {
+            localStorage.setItem(CONFIG_STORAGE_KEY, JSON.stringify(bundle.custom_config, null, 2));
+          }
+          if (IS_CLOUD && Array.isArray(bundle.history)) {
+            setLocalHistory(bundle.history);
+          }
+          loadUserPrefs();
+          loadBudgetOptions();
+          loadHistory();
+          showStatus("已成功匯入本機個人設定與累積紀錄！");
+        } catch (err) {
+          showStatus("備份檔格式錯誤：" + err.message, false);
+        } finally {
+          input.value = "";
+        }
+      };
+      reader.readAsText(file, "utf-8");
     }
 
     loadHistory();
