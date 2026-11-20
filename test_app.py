@@ -486,8 +486,8 @@ class TestDesktopApp(unittest.TestCase):
                 prev_res = self.client.post("/api/travel/preview", json=payload)
                 prev_data = prev_res.get_json()
                 self.assertTrue(prev_data["ok"])
-                # 28km * 3.25 = 91, one-way 14km -> misc 120, total = 211
-                self.assertEqual(prev_data["grand_total"], 211)
+                # 28km * 3.0 = 84, one-way 14km -> misc 120, total = 204
+                self.assertEqual(prev_data["grand_total"], 204)
 
                 gen_res = self.client.post("/api/travel/generate", json=payload)
                 gen_data = gen_res.get_json()

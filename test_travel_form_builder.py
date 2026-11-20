@@ -17,7 +17,7 @@ from travel_form_builder import (
 
 
 class TestTravelFormBuilder(unittest.TestCase):
-    def test_self_car_multi_stop_loop_and_misc_tiers(self) -> None:
+    def test_self_car_and_scooter_multi_stop_loop_and_misc_tiers(self) -> None:
         report = TravelReport(
             traveler_name="王大明",
             job_title="組長",
@@ -38,18 +38,27 @@ class TestTravelFormBuilder(unittest.TestCase):
                 )
             ],
         )
-        cd = compute_day_amounts(report.days[0], rank_level=report.rank_level, rates=report.rates)
-        # (14 + 6 + 18) = 38 km * 3.25 = 123.5 -> round(123.5) = 124
-        self.assertEqual(cd.bus_mrt_fare, 124)
+        cd = compute_day_amounts(report.days[0], rates=report.rates)
+        # 38 km * 3.0 = 114
+        self.assertEqual(cd.self_car_fare, 114)
         self.assertEqual(cd.route_text, "土城高中→教育局→南寧高中→土城高中")
         # One-way = 38 / 2 = 19 km (5~60 km) -> misc 120
         self.assertEqual(cd.misc_fee, 120)
 
-    def test_lodging_cap_and_hsr_note_and_xlsx_output(self) -> None:
+        # Self-scooter: 38 km * 2.0 = 76
+        scooter_entry = TravelDayEntry(
+            date="11/20",
+            transport_mode="self_scooter",
+            segments=report.days[0].segments,
+        )
+        cd_sc = compute_day_amounts(scooter_entry, rates=report.rates)
+        self.assertEqual(cd_sc.self_scooter_fare, 76)
+
+    def test_lodging_weekday_holiday_caps_and_xlsx_output(self) -> None:
         report = TravelReport(
             traveler_name="李小華",
             job_title="教師",
-            rank_level="簡任級以下",
+            rank_level="薦任",
             purpose="全國科展指導",
             destination="台北",
             start_date="115/11/18",
@@ -65,7 +74,8 @@ class TestTravelFormBuilder(unittest.TestCase):
                     transport_mode="flight_hsr",
                     flight_hsr_fare=1350,
                     one_way_km=300.0,
-                    lodging_actual=2600,  # exceeds 2000 limit
+                    is_holiday_lodging=False,
+                    lodging_actual=4000,  # exceeds weekday 3500 limit
                     receipt_count=2,
                 ),
                 TravelDayEntry(
@@ -75,7 +85,8 @@ class TestTravelFormBuilder(unittest.TestCase):
                     transport_mode="flight_hsr",
                     flight_hsr_fare=1350,
                     one_way_km=300.0,
-                    lodging_actual=0,
+                    is_holiday_lodging=True,
+                    lodging_actual=4800,  # exceeds holiday 4500 limit
                     receipt_count=1,
                 ),
             ],
@@ -87,35 +98,37 @@ class TestTravelFormBuilder(unittest.TestCase):
             self.assertTrue(out_path.exists())
 
             wb = openpyxl.load_workbook(out_path, data_only=False)
-            ws = wb["國內出差旅費報告表"]
-            self.assertEqual(ws["C3"].value, "李小華")
-            # Day 1: HSR 1350, Lodging capped at 2000, Misc 300 (>=60km)
-            self.assertEqual(ws["E8"].value, 1350)
-            self.assertEqual(ws["H8"].value, 2000)
-            self.assertEqual(ws["I8"].value, 300)
-            self.assertEqual(ws["K8"].value, "=SUM(D8:I8)")
-            self.assertIn("2000元", ws["L8"].value)
+            ws = wb["出差旅費報告表"]
+            self.assertEqual(ws["A2"].value, "粘貼憑證用紙")
+            self.assertEqual(ws["B9"].value, "李小華")
+            # Day 1 (row 15): HSR 1350, Lodging capped at 3500, Misc 300 (>60km)
+            self.assertEqual(ws["E15"].value, 1350)
+            self.assertEqual(ws["K15"].value, 3500)
+            self.assertEqual(ws["L15"].value, 300)
+            self.assertEqual(ws["N15"].value, "=SUM(D15:L15)")
+            self.assertIn("3500元", ws["O15"].value)
+            # Day 2 (row 16): Holiday lodging capped at 4500
+            self.assertEqual(ws["K16"].value, 4500)
+            self.assertIn("4500元", ws["O16"].value)
             # Numeric cells have shrinkToFit enabled to avoid ###
-            self.assertTrue(ws["E8"].alignment.shrinkToFit)
-            self.assertFalse(ws["E8"].alignment.wrapText)
-            # Uppercase grand total: (1350+2000+300) + (1350+300) = 5300
-            self.assertIn("新台幣伍仟參佰元整", ws["A15"].value)
+            self.assertTrue(ws["E15"].alignment.shrinkToFit)
+            self.assertFalse(ws["E15"].alignment.wrapText)
+            # Grand total: (1350+3500+300) + (1350+4500+300) = 11300
+            self.assertIn("新台幣壹萬壹仟參佰元整", ws["A20"].value)
 
     def test_taxi_requires_approval_and_under_5km_zero_misc(self) -> None:
         report = TravelReport()
         with self.assertRaises(ValueError):
             compute_day_amounts(
                 TravelDayEntry(date="11/20", transport_mode="taxi", taxi_approved=False),
-                rank_level=report.rank_level,
                 rates=report.rates,
             )
 
         cd = compute_day_amounts(
             TravelDayEntry(date="11/20", transport_mode="official_free", one_way_km=3.5),
-            rank_level=report.rank_level,
             rates=report.rates,
         )
-        self.assertEqual(cd.bus_mrt_fare, 0)
+        self.assertEqual(cd.self_car_fare, 0)
         self.assertEqual(cd.misc_fee, 0)
         self.assertEqual(amount_to_chinese_upper(10205), "新台幣壹萬零貳佰零伍元整")
 

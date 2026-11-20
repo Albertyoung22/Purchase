@@ -409,8 +409,8 @@
     <div id="view-travel" class="main-view">
       <div class="card">
         <div class="card-title">
-          <span>國內出差旅費報告表（臺南市政府附表二標準格式）</span>
-          <span class="badge ok">含 78184 號自用車 3.25元/km 順路環線與雜費三段檢核</span>
+          <span>國內出差旅費報告表（最新臺南市政府附表二標準格式）</span>
+          <span class="badge ok">含最新要點：自用汽車3元/km、機車2元/km、住宿平日3,500/假日4,500、雜費三段</span>
         </div>
         <div class="row">
           <div class="col">
@@ -422,15 +422,16 @@
             <input type="text" id="travelJobTitle" placeholder="例如：組長 / 教師" />
           </div>
           <div class="col">
-            <label>職等標準</label>
-            <select id="travelRankLevel">
-              <option value="簡任級以下">簡任級以下（住宿上限 2,000 元/日）</option>
-              <option value="特任級">特任級（住宿上限 2,400 元/日）</option>
-            </select>
+            <label>職等</label>
+            <input type="text" id="travelRankLevel" placeholder="例如：薦任 / 相當簡任" />
           </div>
           <div class="col">
-            <label>自用車費率（元/公里）</label>
-            <input type="number" id="travelCarRate" step="0.01" value="3.25" />
+            <label>自用汽車費率（元/km）</label>
+            <input type="number" id="travelCarRate" step="0.05" value="3" />
+          </div>
+          <div class="col">
+            <label>自用機車費率（元/km）</label>
+            <input type="number" id="travelScooterRate" step="0.05" value="2" />
           </div>
         </div>
         <div class="row" style="margin-top:10px;">
@@ -514,6 +515,7 @@
                 <th style="min-width:80px;">單程km</th>
                 <th style="min-width:90px;">車資/客運比照</th>
                 <th style="min-width:85px;">住宿費</th>
+                <th style="min-width:65px;">假日宿</th>
                 <th style="min-width:80px;">雜費(留空自動)</th>
                 <th style="min-width:65px;">單據數</th>
                 <th style="min-width:150px;">工作摘要</th>
@@ -1413,10 +1415,12 @@
         <td><input type="text" class="t-date" value="${preset.date || ""}" placeholder="11/20" /></td>
         <td>
           <select class="t-mode">
-            <option value="self_car" ${mode === "self_car" ? "selected" : ""}>自用汽機車</option>
+            <option value="self_car" ${mode === "self_car" ? "selected" : ""}>自用/租賃汽車</option>
+            <option value="self_scooter" ${mode === "self_scooter" ? "selected" : ""}>自用/租賃機車</option>
             <option value="flight_hsr" ${mode === "flight_hsr" ? "selected" : ""}>高鐵 / 飛機</option>
             <option value="train" ${mode === "train" ? "selected" : ""}>台鐵</option>
             <option value="bus_mrt" ${mode === "bus_mrt" ? "selected" : ""}>客運 / 捷運</option>
+            <option value="ubike" ${mode === "ubike" ? "selected" : ""}>公共自行車</option>
             <option value="ship" ${mode === "ship" ? "selected" : ""}>船舶</option>
             <option value="taxi" ${mode === "taxi" ? "selected" : ""}>計程車(已核准)</option>
             <option value="official_free" ${mode === "official_free" ? "selected" : ""}>專備/免費便車</option>
@@ -1426,6 +1430,7 @@
         <td><input type="number" step="0.1" class="t-km" value="${preset.one_way_km || ""}" placeholder="自動" /></td>
         <td><input type="number" class="t-fare" value="${preset.fare || ""}" placeholder="自用車免填" /></td>
         <td><input type="number" class="t-lodging" value="${preset.lodging_actual || ""}" placeholder="0" /></td>
+        <td style="text-align:center;"><input type="checkbox" class="t-holiday" style="width:auto;" title="勾選則住宿上限為假日4,500元，否則平日3,500元" /></td>
         <td><input type="number" class="t-misc" value="${preset.misc_fee || ""}" placeholder="自動" /></td>
         <td><input type="number" class="t-rc" value="${preset.receipt_count || ""}" placeholder="0" /></td>
         <td><input type="text" class="t-summary" value="${preset.summary || ""}" placeholder="參加會議" /></td>
@@ -1592,9 +1597,10 @@
           segments_text: hasSegSyntax ? routeVal : "",
           route_text: hasSegSyntax ? "" : routeVal,
           one_way_km: tr.querySelector(".t-km").value.trim(),
-          bus_equivalent_fare: mode === "self_car" && fareVal ? fareVal : "",
-          fare: mode !== "self_car" ? fareVal : "",
+          bus_equivalent_fare: (mode === "self_car" || mode === "self_scooter") && fareVal ? fareVal : "",
+          fare: (mode !== "self_car" && mode !== "self_scooter") ? fareVal : "",
           taxi_approved: mode === "taxi",
+          is_holiday_lodging: tr.querySelector(".t-holiday").checked,
           lodging_actual: tr.querySelector(".t-lodging").value.trim() || "0",
           misc_fee: tr.querySelector(".t-misc").value.trim(),
           receipt_count: tr.querySelector(".t-rc").value.trim() || "0",
@@ -1606,7 +1612,8 @@
         traveler_name: document.getElementById("travelerName").value.trim(),
         job_title: document.getElementById("travelJobTitle").value.trim(),
         rank_level: document.getElementById("travelRankLevel").value,
-        car_rate_per_km: document.getElementById("travelCarRate").value.trim() || "3.25",
+        car_rate_per_km: document.getElementById("travelCarRate").value.trim() || "3",
+        scooter_rate_per_km: document.getElementById("travelScooterRate").value.trim() || "2",
         budget_code: document.getElementById("travelBudgetCode").value.trim(),
         plan_name: document.getElementById("travelPlanName").value.trim(),
         purpose: document.getElementById("travelPurpose").value.trim(),
@@ -1635,11 +1642,12 @@
       showTravelStatus(`試算完成：合計 ${data.grand_total.toLocaleString()} 元（${data.chinese_upper}）`);
       document.getElementById("travelPreviewArea").innerHTML = `
         <table>
-          <thead><tr><th>月日</th><th>起訖地點</th><th>火車</th><th>高鐵/飛機</th><th>客運/自用車</th><th>住宿</th><th>雜費</th><th>小計</th><th>備註</th></tr></thead>
+          <thead><tr><th>月日</th><th>起訖地點</th><th>火車</th><th>高鐵/飛機</th><th>客運/捷運</th><th>自行車</th><th>自用汽車</th><th>自用機車</th><th>住宿</th><th>雜費</th><th>總計</th><th>備註</th></tr></thead>
           <tbody>
             ${data.days.map(d => `<tr>
               <td>${d.date}</td><td>${d.route_text}</td><td>${d.train_fare}</td><td>${d.flight_hsr_fare}</td>
-              <td>${d.bus_mrt_fare}</td><td>${d.lodging_fee}</td><td>${d.misc_fee}</td>
+              <td>${d.bus_mrt_fare}</td><td>${d.ubike_fare}</td><td>${d.self_car_fare}</td><td>${d.self_scooter_fare}</td>
+              <td>${d.lodging_fee}</td><td>${d.misc_fee}</td>
               <td><strong>${d.subtotal.toLocaleString()}</strong></td><td style="font-size:12px;">${d.note}</td>
             </tr>`).join("")}
           </tbody>

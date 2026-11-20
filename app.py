@@ -756,9 +756,11 @@ def _travel_report_from_payload(payload: dict[str, Any]) -> TravelReport:
     if not raw_days:
         raise ValueError("請至少填寫一筆出差行程明細")
 
-    car_rate = parse_number(str(payload.get("car_rate_per_km", "3.25")))
+    car_rate = parse_number(str(payload.get("car_rate_per_km", "3.0")))
+    scooter_rate = parse_number(str(payload.get("scooter_rate_per_km", "2.0")))
     rates = TravelRateConfig(
-        car_rate_per_km=float(car_rate) if car_rate is not None and float(car_rate) > 0 else 3.25
+        car_rate_per_km=float(car_rate) if car_rate is not None and float(car_rate) > 0 else 3.0,
+        scooter_rate_per_km=float(scooter_rate) if scooter_rate is not None and float(scooter_rate) > 0 else 2.0,
     )
 
     days: list[TravelDayEntry] = []
@@ -793,7 +795,11 @@ def _travel_report_from_payload(payload: dict[str, Any]) -> TravelReport:
                 flight_hsr_fare=fare_val if mode == "flight_hsr" else float(parse_number(str(row.get("flight_hsr_fare", "0"))) or 0),
                 bus_mrt_fare=fare_val if mode in ("bus_mrt", "taxi") else float(parse_number(str(row.get("bus_mrt_fare", "0"))) or 0),
                 ship_fare=fare_val if mode == "ship" else float(parse_number(str(row.get("ship_fare", "0"))) or 0),
+                ubike_fare=fare_val if mode == "ubike" else float(parse_number(str(row.get("ubike_fare", "0"))) or 0),
+                self_car_fare=fare_val if mode == "self_car" else float(parse_number(str(row.get("self_car_fare", "0"))) or 0),
+                self_scooter_fare=fare_val if mode == "self_scooter" else float(parse_number(str(row.get("self_scooter_fare", "0"))) or 0),
                 taxi_approved=bool(row.get("taxi_approved", False)),
+                is_holiday_lodging=bool(row.get("is_holiday_lodging", False)),
                 lodging_actual=float(parse_number(str(row.get("lodging_actual", "0"))) or 0),
                 misc_fee=float(misc_raw) if misc_raw is not None else None,
                 receipt_count=int(parse_number(str(row.get("receipt_count", "0"))) or 0),
@@ -846,8 +852,9 @@ def api_travel_preview():
     try:
         payload = request.get_json(force=True)
         report = _travel_report_from_payload(payload)
+        is_same_day = bool(report.start_date and report.start_date == report.end_date) or len(report.days) == 1
         computed = [
-            compute_day_amounts(d, rank_level=report.rank_level, rates=report.rates)
+            compute_day_amounts(d, rates=report.rates, is_same_day_round_trip=is_same_day)
             for d in report.days
         ]
         grand_total = sum(c.subtotal for c in computed)
@@ -862,6 +869,9 @@ def api_travel_preview():
                     "flight_hsr_fare": c.flight_hsr_fare,
                     "bus_mrt_fare": c.bus_mrt_fare,
                     "ship_fare": c.ship_fare,
+                    "ubike_fare": c.ubike_fare,
+                    "self_car_fare": c.self_car_fare,
+                    "self_scooter_fare": c.self_scooter_fare,
                     "lodging_fee": c.lodging_fee,
                     "misc_fee": c.misc_fee,
                     "receipt_count": c.receipt_count,
@@ -886,8 +896,9 @@ def api_travel_generate():
         safe_name = sanitize_filename(report.traveler_name or "出差人員")
         out_path = OUTPUT_DIR / f"國內出差旅費報告表_{safe_name}.xlsx"
         build_travel_report_xlsx(report, out_path)
+        is_same_day = bool(report.start_date and report.start_date == report.end_date) or len(report.days) == 1
         computed = [
-            compute_day_amounts(d, rank_level=report.rank_level, rates=report.rates)
+            compute_day_amounts(d, rates=report.rates, is_same_day_round_trip=is_same_day)
             for d in report.days
         ]
         grand_total = sum(c.subtotal for c in computed)
