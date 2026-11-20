@@ -460,6 +460,46 @@ class TestDesktopApp(unittest.TestCase):
             self.assertNotIn("secret-key-123", captured_req["url"])
             self.assertEqual(captured_req["headers"].get("x-goog-api-key"), "secret-key-123")
 
+    def test_travel_preview_generate_and_print_preview_api(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            out_dir = Path(tmp) / "output"
+            payload = {
+                "traveler_name": "王大明",
+                "job_title": "組長",
+                "rank_level": "簡任級以下",
+                "budget_code": "321",
+                "plan_name": "各校經常門分支計畫",
+                "purpose": "教育局業務會議",
+                "destination": "永華市政中心",
+                "start_date": "115/11/20",
+                "end_date": "115/11/20",
+                "days": [
+                    {
+                        "date": "11/20",
+                        "transport_mode": "self_car",
+                        "segments_text": "土城高中->教育局:14, 教育局->土城高中:14",
+                        "summary": "參加會議",
+                    }
+                ],
+            }
+            with patch.object(web_app, "OUTPUT_DIR", out_dir):
+                prev_res = self.client.post("/api/travel/preview", json=payload)
+                prev_data = prev_res.get_json()
+                self.assertTrue(prev_data["ok"])
+                # 28km * 3.25 = 91, one-way 14km -> misc 120, total = 211
+                self.assertEqual(prev_data["grand_total"], 211)
+
+                gen_res = self.client.post("/api/travel/generate", json=payload)
+                gen_data = gen_res.get_json()
+                self.assertTrue(gen_data["ok"])
+                dl_res = self.client.get(f"/api/download/{gen_data['filename']}")
+                self.assertEqual(dl_res.status_code, 200)
+                dl_res.close()
+
+                pp_res = self.client.post("/api/travel/print-preview", json=payload)
+                pp_data = pp_res.get_json()
+                self.assertTrue(pp_data["ok"])
+
 
 if __name__ == "__main__":
     unittest.main()

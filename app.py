@@ -32,7 +32,17 @@ from fill_purchase_forms import (
     normalize_budget_code,
     parse_number,
     read_requests_csv,
+    sanitize_filename,
     split_requests_opt,
+)
+from travel_form_builder import (
+    RouteSegment,
+    TravelDayEntry,
+    TravelRateConfig,
+    TravelReport,
+    amount_to_chinese_upper,
+    build_travel_report_xlsx,
+    compute_day_amounts,
 )
 from form_builder import BUDGET_CODE_MAP
 from history_store import (
@@ -719,6 +729,186 @@ def api_open_output():
     if os.name == "nt":
         os.startfile(str(OUTPUT_DIR))  # type: ignore[attr-defined]
     return jsonify({"ok": True})
+
+
+def _parse_segments_text(raw: str) -> list[RouteSegment]:
+    """Parse 'A->B:14, B->A:14' or 'A→B:14' into RouteSegment list."""
+    segments: list[RouteSegment] = []
+    for part in re.split(r"[,;\n]+", raw.strip()):
+        part = part.strip()
+        if not part:
+            continue
+        m = re.match(r"^(.*?)(?:->|→)(.*?)\s*[:：]\s*(\d+(?:\.\d+)?)\s*(?:km|公里)?$", part, re.IGNORECASE)
+        if m:
+            segments.append(
+                RouteSegment(
+                    origin=m.group(1).strip(),
+                    destination=m.group(2).strip(),
+                    distance_km=float(m.group(3)),
+                )
+            )
+    return segments
+
+
+def _travel_report_from_payload(payload: dict[str, Any]) -> TravelReport:
+    raw_days = payload.get("days", [])
+    if not raw_days:
+        raise ValueError("請至少填寫一筆出差行程明細")
+
+    car_rate = parse_number(str(payload.get("car_rate_per_km", "3.25")))
+    rates = TravelRateConfig(
+        car_rate_per_km=float(car_rate) if car_rate is not None and float(car_rate) > 0 else 3.25
+    )
+
+    days: list[TravelDayEntry] = []
+    for row in raw_days:
+        mode = str(row.get("transport_mode", "self_car")).strip() or "self_car"
+        seg_text = str(row.get("segments_text", "")).strip()
+        segments = _parse_segments_text(seg_text) if seg_text else []
+        for s in row.get("segments", []) or []:
+            segments.append(
+                RouteSegment(
+                    origin=str(s.get("origin", "")).strip(),
+                    destination=str(s.get("destination", "")).strip(),
+                    distance_km=float(parse_number(str(s.get("distance_km", "0"))) or 0),
+                )
+            )
+
+        fare_val = float(parse_number(str(row.get("fare", "0"))) or 0)
+        bus_equiv = parse_number(str(row.get("bus_equivalent_fare", "")))
+        one_way = parse_number(str(row.get("one_way_km", "")))
+        misc_raw = parse_number(str(row.get("misc_fee", "")))
+
+        days.append(
+            TravelDayEntry(
+                date=str(row.get("date", "")).strip(),
+                route_text=str(row.get("route_text", "")).strip(),
+                summary=str(row.get("summary", "")).strip(),
+                transport_mode=mode,
+                segments=segments,
+                one_way_km=float(one_way) if one_way is not None else None,
+                bus_equivalent_fare=float(bus_equiv) if bus_equiv is not None else None,
+                train_fare=fare_val if mode == "train" else float(parse_number(str(row.get("train_fare", "0"))) or 0),
+                flight_hsr_fare=fare_val if mode == "flight_hsr" else float(parse_number(str(row.get("flight_hsr_fare", "0"))) or 0),
+                bus_mrt_fare=fare_val if mode in ("bus_mrt", "taxi") else float(parse_number(str(row.get("bus_mrt_fare", "0"))) or 0),
+                ship_fare=fare_val if mode == "ship" else float(parse_number(str(row.get("ship_fare", "0"))) or 0),
+                taxi_approved=bool(row.get("taxi_approved", False)),
+                lodging_actual=float(parse_number(str(row.get("lodging_actual", "0"))) or 0),
+                misc_fee=float(misc_raw) if misc_raw is not None else None,
+                receipt_count=int(parse_number(str(row.get("receipt_count", "0"))) or 0),
+                note=str(row.get("note", "")).strip(),
+            )
+        )
+
+    return TravelReport(
+        school_name=str(payload.get("school_name", "")).strip() or "臺南市立土城高級中學",
+        traveler_name=str(payload.get("traveler_name", "")).strip(),
+        job_title=str(payload.get("job_title", "")).strip(),
+        rank_level=str(payload.get("rank_level", "簡任級以下")).strip() or "簡任級以下",
+        purpose=str(payload.get("purpose", "")).strip(),
+        destination=str(payload.get("destination", "")).strip(),
+        start_date=str(payload.get("start_date", "")).strip(),
+        end_date=str(payload.get("end_date", "")).strip(),
+        total_days_text=str(payload.get("total_days_text", "")).strip(),
+        budget_code=normalize_budget_code(str(payload.get("budget_code", ""))),
+        plan_name=str(payload.get("plan_name", "")).strip(),
+        days=days,
+        rates=rates,
+    )
+
+
+@app.post("/api/travel/preview")
+def api_travel_preview():
+    try:
+        payload = request.get_json(force=True)
+        report = _travel_report_from_payload(payload)
+        computed = [
+            compute_day_amounts(d, rank_level=report.rank_level, rates=report.rates)
+            for d in report.days
+        ]
+        grand_total = sum(c.subtotal for c in computed)
+        return jsonify({
+            "ok": True,
+            "days": [
+                {
+                    "date": c.date,
+                    "route_text": c.route_text,
+                    "summary": c.summary,
+                    "train_fare": c.train_fare,
+                    "flight_hsr_fare": c.flight_hsr_fare,
+                    "bus_mrt_fare": c.bus_mrt_fare,
+                    "ship_fare": c.ship_fare,
+                    "lodging_fee": c.lodging_fee,
+                    "misc_fee": c.misc_fee,
+                    "receipt_count": c.receipt_count,
+                    "subtotal": c.subtotal,
+                    "note": c.note,
+                }
+                for c in computed
+            ],
+            "grand_total": grand_total,
+            "chinese_upper": amount_to_chinese_upper(grand_total),
+        })
+    except Exception as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 400
+
+
+@app.post("/api/travel/generate")
+def api_travel_generate():
+    try:
+        payload = request.get_json(force=True)
+        report = _travel_report_from_payload(payload)
+        OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+        safe_name = sanitize_filename(report.traveler_name or "出差人員")
+        out_path = OUTPUT_DIR / f"國內出差旅費報告表_{safe_name}.xlsx"
+        build_travel_report_xlsx(report, out_path)
+        computed = [
+            compute_day_amounts(d, rank_level=report.rank_level, rates=report.rates)
+            for d in report.days
+        ]
+        grand_total = sum(c.subtotal for c in computed)
+        return jsonify({
+            "ok": True,
+            "filename": out_path.name,
+            "grand_total": grand_total,
+            "chinese_upper": amount_to_chinese_upper(grand_total),
+        })
+    except Exception as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 400
+
+
+@app.post("/api/travel/print-preview")
+def api_travel_print_preview():
+    try:
+        payload = request.get_json(force=True)
+        report = _travel_report_from_payload(payload)
+        preview_root = OUTPUT_DIR / "_preview"
+        _cleanup_old_previews(preview_root)
+        preview_id = uuid.uuid4().hex[:12]
+        preview_dir = preview_root / preview_id
+        preview_dir.mkdir(parents=True, exist_ok=True)
+        xlsx_path = preview_dir / "國內出差旅費報告表.xlsx"
+        build_travel_report_xlsx(report, xlsx_path)
+        pdf_path = preview_dir / "國內出差旅費報告表.pdf"
+
+        if export_xlsx_to_pdf(xlsx_path, pdf_path):
+            pngs = render_pdf_to_pngs(pdf_path, preview_dir, prefix=xlsx_path.stem)
+            return jsonify({
+                "ok": True,
+                "mode": "excel_pdf",
+                "pdf_url": f"/api/preview-file/{preview_id}/{pdf_path.name}",
+                "page_urls": [f"/api/preview-file/{preview_id}/{p.name}" for p in pngs],
+                "total_forms": 1,
+            })
+
+        return jsonify({
+            "ok": True,
+            "mode": "html_fallback",
+            "html": render_xlsx_fallback_html(xlsx_path),
+            "total_forms": 1,
+        })
+    except Exception as exc:
+        return jsonify({"ok": False, "error": f"列印預覽失敗：{exc}"}), 400
 
 
 @app.post("/api/shutdown")
