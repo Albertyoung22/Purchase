@@ -473,20 +473,28 @@
           <span>出差行程與費用明細</span>
           <button type="button" class="secondary" onclick="addTravelDayRow()">＋ 新增一日行程</button>
         </div>
-        <div style="background:#f8fafc; border:1px solid var(--border); border-radius:8px; padding:10px 12px; margin-bottom:10px;">
-          <div class="row" style="align-items:center;">
-            <div class="col" style="flex:3; min-width:260px;">
-              <label>智慧起訖路線里程計算（輸入地點以 <code>-&gt;</code> 分隔，免查地圖）</label>
-              <input type="text" id="travelSmartRoute" placeholder="例如：土城高中 -> 教育局 -> 南寧高中" />
+        <div style="background:#f8fafc; border:1px solid var(--border); border-radius:8px; padding:12px 14px; margin-bottom:10px;">
+          <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px; margin-bottom:8px;">
+            <label style="margin:0;">智慧起訖路線積木（點選常用地點或輸入地點按 Enter，免打 <code>-&gt;</code>）</label>
+            <button type="button" class="secondary" onclick="resetTravelStops()" style="padding:4px 10px; font-size:12px;">重設為學校起點</button>
+          </div>
+          <div id="travelStopChips" style="display:flex; flex-wrap:wrap; align-items:center; gap:6px; min-height:36px; padding:6px 8px; background:#fff; border:1px solid var(--border); border-radius:6px; margin-bottom:8px;"></div>
+          <div class="row" style="align-items:center; gap:8px;">
+            <div class="col" style="flex:2; min-width:200px;">
+              <input type="text" id="travelCustomStopInput" placeholder="輸入其他地點（例如：臺灣歷史博物館）後按 Enter" onkeydown="if(event.key==='Enter'){event.preventDefault();addCustomTravelStop();}" />
             </div>
-            <div style="display:flex; align-items:center; gap:6px; padding-top:16px;">
+            <div>
+              <button type="button" class="secondary" onclick="addCustomTravelStop()">＋ 加入站點</button>
+            </div>
+            <div style="display:flex; align-items:center; gap:6px;">
               <input type="checkbox" id="travelRoundTrip" checked style="width:auto;" />
-              <label for="travelRoundTrip" style="margin:0; cursor:pointer;">自動來回（返回起點）</label>
+              <label for="travelRoundTrip" style="margin:0; cursor:pointer;">自動來回</label>
             </div>
-            <div style="padding-top:16px;">
+            <div>
               <button type="button" onclick="calcSmartRouteToRow()">智慧計算里程</button>
             </div>
           </div>
+          <div id="travelQuickPlaces" style="display:flex; flex-wrap:wrap; gap:6px; margin-top:8px;"></div>
           <div id="travelSmartResult" style="font-size:12px; color:var(--accent); margin-top:6px;"></div>
         </div>
         <p style="font-size:12px; color:var(--muted); margin:0 0 8px;">
@@ -1425,18 +1433,110 @@
       tbody.appendChild(tr);
     }
 
+    const TRAVEL_CUSTOM_PLACES_KEY = "purchase_app_custom_travel_places_v1";
+    const BUILTIN_TRAVEL_PLACES = [
+      "教育局", "民治市政中心", "高鐵臺南站", "臺南火車站", "新營火車站",
+      "南寧高中", "臺南一中", "臺南女中", "臺南高商", "新豐高中", "新營高工", "白河商工", "成功大學"
+    ];
+    let travelStops = [];
+
+    function getDefaultOriginPlace() {
+      const s = (document.getElementById("schoolName").value || "").trim();
+      if (!s) return "土城高中";
+      return s === "臺南市立土城高級中學" ? "土城高中" : s;
+    }
+
+    function getSavedCustomPlaces() {
+      try {
+        const arr = JSON.parse(localStorage.getItem(TRAVEL_CUSTOM_PLACES_KEY) || "[]");
+        return Array.isArray(arr) ? arr : [];
+      } catch { return []; }
+    }
+
+    function saveCustomPlace(place) {
+      if (!place || BUILTIN_TRAVEL_PLACES.includes(place) || place === getDefaultOriginPlace()) return;
+      const list = getSavedCustomPlaces().filter(p => p !== place);
+      list.unshift(place);
+      try { localStorage.setItem(TRAVEL_CUSTOM_PLACES_KEY, JSON.stringify(list.slice(0, 10))); } catch {}
+      renderTravelQuickPlaces();
+    }
+
+    function renderTravelStopChips() {
+      const box = document.getElementById("travelStopChips");
+      if (!box) return;
+      if (!travelStops.length) {
+        box.innerHTML = `<span style="font-size:12px; color:var(--muted);">尚未選擇站點，請點下方常用地點或輸入地點</span>`;
+        return;
+      }
+      box.innerHTML = travelStops.map((stop, idx) => `
+        ${idx > 0 ? '<span style="color:var(--muted); font-weight:700;">→</span>' : ''}
+        <span class="badge" style="display:inline-flex; align-items:center; gap:6px; padding:4px 10px; font-size:13px;">
+          ${stop}
+          <button type="button" onclick="removeTravelStop(${idx})" style="background:transparent; color:#1e40af; border:none; padding:0 2px; font-size:14px; line-height:1; cursor:pointer;">×</button>
+        </span>
+      `).join("");
+    }
+
+    function renderTravelQuickPlaces() {
+      const box = document.getElementById("travelQuickPlaces");
+      if (!box) return;
+      const custom = getSavedCustomPlaces();
+      const all = [...BUILTIN_TRAVEL_PLACES, ...custom];
+      box.innerHTML = `<span style="font-size:12px; color:var(--muted); align-self:center;">常用地點：</span>` +
+        all.map(p => `
+          <button type="button" class="secondary" onclick="appendTravelStop('${p.replace(/'/g, "\\'")}')" style="padding:4px 10px; font-size:12px; border-radius:999px;">＋ ${p}</button>
+        `).join("");
+    }
+
+    function appendTravelStop(place) {
+      const p = (place || "").trim();
+      if (!p) return;
+      if (!travelStops.length) travelStops.push(getDefaultOriginPlace());
+      if (travelStops[travelStops.length - 1] !== p) {
+        travelStops.push(p);
+      }
+      renderTravelStopChips();
+    }
+
+    function addCustomTravelStop() {
+      const inp = document.getElementById("travelCustomStopInput");
+      const val = (inp.value || "").trim();
+      if (!val) return;
+      appendTravelStop(val);
+      saveCustomPlace(val);
+      inp.value = "";
+    }
+
+    function removeTravelStop(idx) {
+      travelStops.splice(idx, 1);
+      renderTravelStopChips();
+    }
+
+    function resetTravelStops() {
+      travelStops = [getDefaultOriginPlace()];
+      renderTravelStopChips();
+      document.getElementById("travelSmartResult").textContent = "";
+    }
+
     async function calcSmartRouteToRow() {
-      const routeInput = document.getElementById("travelSmartRoute").value.trim();
+      const inp = document.getElementById("travelCustomStopInput");
+      if (inp && inp.value.trim()) {
+        addCustomTravelStop();
+      }
       const roundTrip = document.getElementById("travelRoundTrip").checked;
-      if (!routeInput) return showTravelStatus("請先輸入起訖地點（例如：土城高中 -> 教育局）", false);
+      if (travelStops.length < 2) {
+        return showTravelStatus("請至少選擇或加入一個目的地站點（例如點選「＋ 教育局」）", false);
+      }
 
       const res = await fetch("/api/travel/calc-route", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ stops: routeInput, round_trip: roundTrip }),
+        body: JSON.stringify({ stops: travelStops, round_trip: roundTrip }),
       });
       const data = await res.json();
       if (!data.ok) return showTravelStatus(data.error, false);
+
+      travelStops.forEach(saveCustomPlace);
 
       const rate = parseFloat(document.getElementById("travelCarRate").value || "3.25") || 3.25;
       const estFare = Math.round(data.total_km * rate);
@@ -1454,6 +1554,9 @@
       targetRow.querySelector(".t-km").value = data.one_way_km;
       showTravelStatus("已將智慧計算里程填入出差行程表！");
     }
+
+    resetTravelStops();
+    renderTravelQuickPlaces();
 
     async function calcRowMileage(btn) {
       const tr = btn.closest("tr");
