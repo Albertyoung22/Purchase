@@ -141,7 +141,7 @@
     }
     .file-list a:hover { background: #dbeafe; }
     details summary { cursor: pointer; font-size: 13px; color: var(--primary); font-weight: 600; margin-top: 8px; }
-    .main-nav { display: flex; gap: 10px; margin-bottom: 16px; }
+    .main-nav { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 16px; }
     .main-nav-btn {
       padding: 10px 20px;
       border-radius: 8px;
@@ -165,8 +165,8 @@
 <body>
   <header>
     <div>
-      <h1 id="appTitle">學校採購申請單自動化系統</h1>
-      <div class="sub">支援電子發票／估價單 OCR 掃描、明細批次填表、OR-Tools CP-SAT 最佳化分單（個人設定與紀錄皆存於本機瀏覽器）</div>
+      <h1 id="appTitle">學校採購申請單自動化系統｜國內出差旅費</h1>
+      <div class="sub">支援電子發票／估價單 OCR 掃描、CP-SAT 最佳化分單、國內出差旅費報支與順路里程計算（設定存於本機瀏覽器）</div>
     </div>
     {% if not is_cloud %}
     <div style="display:flex; gap:8px;">
@@ -613,7 +613,7 @@
 
     function updateSchoolTitle() {
       const name = (document.getElementById("schoolName")?.value || "").trim();
-      const title = name ? `${name}｜採購申請單自動化系統` : "學校採購申請單自動化系統";
+      const title = name ? `${name}｜採購申請單自動化系統・國內出差旅費` : "學校採購申請單自動化系統｜國內出差旅費";
       const h1 = document.getElementById("appTitle");
       if (h1) h1.textContent = title;
       document.title = title;
