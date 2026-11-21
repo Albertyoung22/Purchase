@@ -536,15 +536,52 @@ def fill_worksheet(ws: Worksheet, req: PurchaseRequest, cfg: dict[str, Any]) -> 
             if cur_w is None or cur_w < min_w:
                 ws.column_dimensions[c_let].width = min_w
 
-    # Center-align vertical label cells (e.g. '請購人' with textRotation=255) so LibreOffice matches '處室主任'
-    for row in ws.iter_rows(min_row=1, max_row=ws.max_row, max_col=10):
+    # Normalize vertical labels (請購人, 處室主任, 代墊欄) and budget header alignments (restored from ea4aac8)
+    for row in ws.iter_rows(min_row=1, max_row=ws.max_row, min_col=1, max_col=10):
         for cell in row:
-            if cell.has_style and cell.alignment and cell.alignment.textRotation == 255:
-                if not cell.alignment.horizontal:
-                    align = copy(cell.alignment)
-                    align.horizontal = "center"
-                    align.vertical = align.vertical or "center"
-                    cell.alignment = align
+            if (
+                isinstance(cell.value, str)
+                and cell.alignment
+                and cell.alignment.textRotation == 255
+                and (cell.alignment.horizontal != "center" or cell.alignment.indent)
+            ):
+                new_align = copy(cell.alignment)
+                new_align.horizontal = "center"
+                new_align.vertical = new_align.vertical or "center"
+                new_align.indent = 0
+                cell.alignment = new_align
+
+    for key in ("plan_coord", "lv1_coord"):
+        coord = layout.get(key)
+        if coord:
+            cell = ws[coord]
+            al = copy(cell.alignment) if cell.alignment else Alignment()
+            al.horizontal = "center"
+            al.vertical = "center"
+            al.indent = 0
+            al.wrap_text = True
+            cell.alignment = al
+
+    for key in ("lv2_coord", "lv3_coord"):
+        coord = layout.get(key)
+        if coord:
+            cell = ws[coord]
+            al = copy(cell.alignment) if cell.alignment else Alignment()
+            al.horizontal = "center"
+            al.vertical = "center"
+            al.indent = 0
+            al.wrap_text = False
+            al.shrink_to_fit = True
+            cell.alignment = al
+
+    bc_coord = cells.get("budget_code")
+    if bc_coord:
+        cell = ws[bc_coord]
+        al = copy(cell.alignment) if cell.alignment else Alignment()
+        al.horizontal = "center"
+        al.vertical = "center"
+        al.indent = 0
+        cell.alignment = al
 
     _configure_single_page_print(ws)
 
