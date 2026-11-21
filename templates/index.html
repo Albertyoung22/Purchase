@@ -783,20 +783,16 @@
       if (viewName === "history") loadHistory();
     }
 
-    function switchTab(mode, btn) {
-      currentMode = mode;
-      document.querySelectorAll(".tab-btn").forEach(b => b.classList.remove("active"));
-      document.querySelectorAll(".tab-panel").forEach(p => p.classList.remove("active"));
-      if (btn) btn.classList.add("active");
-      document.getElementById("panel-" + mode).classList.add("active");
-    }
-
     async function scanDocumentImage() {
       const files = [...(document.getElementById("scanFile").files || [])];
       if (!files.length) return showStatus("請先選擇圖片、PDF 或 CSV 檔案", false);
 
       // Auto-handle CSV files if selected in unified file picker
-      if (files.length === 1 && files[0].name.toLowerCase().endsWith(".csv")) {
+      const hasCsv = files.some(f => f.name.toLowerCase().endsWith(".csv"));
+      if (hasCsv && files.length > 1) {
+        return showStatus("CSV 檔案請單獨選取上傳", false);
+      }
+      if (files.length === 1 && hasCsv) {
         currentMode = "csv";
         const fd = new FormData();
         fd.append("file", files[0]);
@@ -1057,17 +1053,20 @@
       const tbody = document.querySelector("#manualTable tbody");
       const tr = document.createElement("tr");
       tr.innerHTML = `
-        <td><input type="text" class="m-name" value="${name}" placeholder="品名（項目）" /></td>
-        <td><input type="text" class="m-spec" value="${spec}" placeholder="規格" /></td>
-        <td><input type="text" class="m-unit" value="${unit || '個'}" /></td>
-        <td><input type="number" class="m-qty" value="${qty}" /></td>
-        <td><input type="number" class="m-price" value="${price}" placeholder="選填" /></td>
-        <td><input type="number" class="m-sub" value="${sub}" placeholder="選填" /></td>
-        <td><input type="text" class="m-note" value="${note}" placeholder="備註" /></td>
+        <td><input type="text" class="m-name" value="${escapeHtml(name)}" placeholder="品名（項目）" /></td>
+        <td><input type="text" class="m-spec" value="${escapeHtml(spec)}" placeholder="規格" /></td>
+        <td><input type="text" class="m-unit" value="${escapeHtml(unit || '個')}" /></td>
+        <td><input type="number" class="m-qty" value="${escapeHtml(qty)}" /></td>
+        <td><input type="number" class="m-price" value="${escapeHtml(price)}" placeholder="選填" /></td>
+        <td><input type="number" class="m-sub" value="${escapeHtml(sub)}" placeholder="選填" /></td>
+        <td><input type="text" class="m-note" value="${escapeHtml(note)}" placeholder="備註" /></td>
         <td style="text-align:center;"><button type="button" onclick="this.closest('tr').remove()" style="color:#b91c1c; background:#fef2f2; border:1px solid #fecaca; padding:5px 8px; font-size:12px; white-space:nowrap;">刪</button></td>
       `;
       tbody.appendChild(tr);
     }
+    document.getElementById("manualTable").addEventListener("input", () => {
+      if (currentMode === "csv") currentMode = "manual";
+    });
     addManualRow("範例品項", "1", "100", "");
 
     async function uploadTemplate() {
@@ -1140,39 +1139,6 @@
       const data = await res.json();
       if (!data.ok) return showStatus("設定儲存失敗：" + data.error, false);
       showStatus("config.json 已更新並儲存");
-    }
-
-    async function uploadCsv() {
-      const file = document.getElementById("csvFile").files[0];
-      if (!file) return showStatus("請先選擇 CSV 檔案", false);
-      const fd = new FormData();
-      fd.append("file", file);
-      const res = await fetch("/api/upload-csv", { method: "POST", body: fd });
-      const data = await res.json();
-      if (!data.ok) return showStatus(data.error, false);
-      document.getElementById("csvStatus").textContent = "已上傳 CSV：" + data.filename;
-      showStatus("CSV 上傳成功：" + data.filename);
-    }
-
-    async function parseInvoicePreview() {
-      const text = document.getElementById("invoiceText").value;
-      const res = await fetch("/api/parse-invoice-text", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text })
-      });
-      const data = await res.json();
-      if (!data.ok) return showStatus(data.error, false);
-      const inv = data.invoice;
-      const box = document.getElementById("invoiceParsedBox");
-      box.style.display = "block";
-      box.innerHTML = `
-        <div><strong>發票號碼：</strong>${inv.invoice_no || "(未偵測)"} ｜ <strong>日期：</strong>${inv.roc_date || "(未偵測)"} ｜ <strong>總計：</strong>${inv.total_amount ?? 0} 元</div>
-        <table>
-          <thead><tr><th>品名</th><th>數量</th><th>單價</th><th>小計</th></tr></thead>
-          <tbody>${inv.items.map(i => `<tr><td>${i.name}</td><td>${i.quantity}</td><td>${i.unit_price ?? ""}</td><td>${i.subtotal}</td></tr>`).join("")}</tbody>
-        </table>
-      `;
     }
 
     function buildPayload() {
