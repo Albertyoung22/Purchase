@@ -1399,6 +1399,7 @@
 
     async function generateExcel() {
       showStatus("正在產出 Excel 請購單...");
+      await ensureLocalFolderPermission();
       try {
         const res = await fetch("/api/generate", {
           method: "POST",
@@ -2016,6 +2017,7 @@
     }
 
     async function generateTravel() {
+      await ensureLocalFolderPermission();
       const res = await fetch("/api/travel/generate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -2279,6 +2281,7 @@
     }
 
     async function generateSubstitute() {
+      await ensureLocalFolderPermission();
       const res = await fetch("/api/substitute/generate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -2440,6 +2443,21 @@
       }
     }
 
+    async function ensureLocalFolderPermission() {
+      if (!localDirHandle) return false;
+      try {
+        let perm = await localDirHandle.queryPermission({ mode: "readwrite" });
+        if (perm !== "granted") {
+          perm = await localDirHandle.requestPermission({ mode: "readwrite" });
+        }
+        localDirPermission = perm;
+        updateLocalSyncUI();
+        return perm === "granted";
+      } catch {
+        return false;
+      }
+    }
+
     async function autoSaveFilesToLocalFolder(filenames) {
       if (!localDirHandle || !filenames.length) return 0;
       try {
@@ -2498,10 +2516,11 @@
         if (perm !== "granted") return showStatus("未取得本機資料夾讀寫權限", false);
         localDirHandle = picked;
         localDirPermission = "granted";
-        await saveDirHandleToIdb(picked);
+        try { await saveDirHandleToIdb(picked); } catch {}
         await loadFromLocalFolder();
+        await syncLocalFolderWrite();
         updateLocalSyncUI();
-        showStatus(`已綁定本機資料夾「${picked.name}」，設定、紀錄與 Excel 將自動同步至本機！`);
+        showStatus(`已綁定本機資料夾「${picked.name}」，並已寫入 purchase_settings.json 與 purchase_history.json！`);
       } catch (err) {
         if (err && err.name === "AbortError") return;
         showStatus("綁定本機資料夾失敗：" + err.message, false);
