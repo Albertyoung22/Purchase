@@ -915,13 +915,27 @@
           <strong>辨識引擎：</strong>${escapeHtml(data.engine)} ｜
           ${data.cpsat_verified ? '<span class="badge ok">CP-SAT 金額核對相符</span> ｜ ' : ''}
           ${data.document_type ? `<strong>單據類型：</strong><span class="badge">${escapeHtml(data.document_type)}</span> ｜ ` : ''}
-          <strong>總金額：</strong>${inv.total_amount ?? '(未辨識)'} 元 ｜
+          <strong>總金額：</strong><span id="scanTotalAmt">${inv.total_amount ?? '(未辨識)'}</span> 元 ｜
           <strong>自動選用工作表：</strong><span class="badge ok">${escapeHtml(data.recommended_sheet)}</span>
-          ${inv.items && inv.items.length ? `
-          <table style="margin-top:8px;">
-            <thead><tr><th>品名（項目）</th><th>規格</th><th>單位</th><th>數量</th><th>單價</th><th>小計</th><th>備註</th></tr></thead>
-            <tbody>${inv.items.map(i => `<tr><td>${escapeHtml(i.name)}</td><td>${escapeHtml(i.spec || '')}</td><td>${escapeHtml(i.unit || '')}</td><td>${i.quantity}</td><td>${i.unit_price ?? ''}</td><td>${i.subtotal}</td><td>${escapeHtml(i.note || '')}</td></tr>`).join('')}</tbody>
-          </table>` : `<div style="margin-top:6px; color:#991b1b; font-weight:600;">未能自動解析出明細金額，請切換到「手動輸入 / 掃描結果編輯」補填金額，或貼上「原始文字」後再試。</div>`}
+          <div style="margin-top:8px; display:flex; justify-content:space-between; align-items:center;">
+            <span style="font-size:12px; color:#065f46;">💡 可直接在下方表格修改品名、規格、單位、數量、單價或刪除／新增列，修改後會自動同步至產出表單：</span>
+            <button type="button" class="secondary" onclick="addScanEditRow()" style="padding:4px 10px; font-size:12px;">＋ 新增品項</button>
+          </div>
+          <table id="scanEditableTable" style="margin-top:6px;">
+            <thead><tr><th>品名（項目）</th><th style="width:110px;">規格</th><th style="width:62px;">單位</th><th style="width:68px;">數量</th><th style="width:86px;">單價</th><th style="width:90px;">小計</th><th style="width:110px;">備註</th><th style="width:46px;">刪</th></tr></thead>
+            <tbody>${(inv.items && inv.items.length ? inv.items : [{name: (data.document_type || '發票') + '採購', spec: '', unit: '批', quantity: 1, unit_price: '', subtotal: inv.total_amount ?? '', note: ''}]).map(i => `
+              <tr>
+                <td><input type="text" class="s-name" value="${escapeHtml(i.name)}" oninput="syncScanTableToManual(this)" /></td>
+                <td><input type="text" class="s-spec" value="${escapeHtml(i.spec || '')}" oninput="syncScanTableToManual(this)" /></td>
+                <td><input type="text" class="s-unit" value="${escapeHtml(i.unit || '')}" oninput="syncScanTableToManual(this)" /></td>
+                <td><input type="number" class="s-qty" value="${i.quantity ?? 1}" oninput="syncScanTableToManual(this, true)" /></td>
+                <td><input type="number" class="s-price" value="${i.unit_price ?? ''}" placeholder="選填" oninput="syncScanTableToManual(this, true)" /></td>
+                <td><input type="number" class="s-sub" value="${i.subtotal ?? ''}" oninput="syncScanTableToManual(this, false)" /></td>
+                <td><input type="text" class="s-note" value="${escapeHtml(i.note || '')}" oninput="syncScanTableToManual(this)" /></td>
+                <td><button type="button" class="danger" onclick="this.closest('tr').remove(); syncScanTableToManual();" style="padding:4px 8px; font-size:12px;">刪</button></td>
+              </tr>`).join('')}
+            </tbody>
+          </table>
           <details style="margin-top:8px;" ${preserveRawOpen ? 'open' : ''}>
             <summary style="cursor:pointer; font-weight:600;">檢視 / 編輯原始 OCR / PDF 文字（可用 CP-SAT 轉為 7 欄明細）</summary>
             <textarea id="rawOcrEditor" style="margin-top:6px; min-height:140px;">${escapeHtml(data.raw_text || '')}</textarea>
@@ -943,6 +957,55 @@
       showStatus(`完成解析！總金額 ${inv.total_amount ?? 0} 元 → 自動選用「${data.recommended_sheet}」`);
       if (greenHint) {
         document.getElementById("scanResultBox").insertAdjacentHTML("beforeend", greenHint);
+      }
+    }
+
+    function addScanEditRow() {
+      const tbody = document.querySelector("#scanEditableTable tbody");
+      if (!tbody) return;
+      const tr = document.createElement("tr");
+      tr.innerHTML = `
+        <td><input type="text" class="s-name" value="" placeholder="品名（項目）" oninput="syncScanTableToManual(this)" /></td>
+        <td><input type="text" class="s-spec" value="" placeholder="規格" oninput="syncScanTableToManual(this)" /></td>
+        <td><input type="text" class="s-unit" value="個" oninput="syncScanTableToManual(this)" /></td>
+        <td><input type="number" class="s-qty" value="1" oninput="syncScanTableToManual(this, true)" /></td>
+        <td><input type="number" class="s-price" value="" placeholder="選填" oninput="syncScanTableToManual(this, true)" /></td>
+        <td><input type="number" class="s-sub" value="" oninput="syncScanTableToManual(this, false)" /></td>
+        <td><input type="text" class="s-note" value="" placeholder="備註" oninput="syncScanTableToManual(this)" /></td>
+        <td><button type="button" class="danger" onclick="this.closest('tr').remove(); syncScanTableToManual();" style="padding:4px 8px; font-size:12px;">刪</button></td>
+      `;
+      tbody.appendChild(tr);
+      syncScanTableToManual();
+    }
+
+    function syncScanTableToManual(changedInput = null, recalcSub = false) {
+      if (changedInput && recalcSub) {
+        const tr = changedInput.closest("tr");
+        const q = parseFloat(tr.querySelector(".s-qty").value);
+        const p = parseFloat(tr.querySelector(".s-price").value);
+        if (!isNaN(q) && !isNaN(p)) {
+          tr.querySelector(".s-sub").value = String(Math.round(q * p));
+        }
+      }
+      const scanRows = [...document.querySelectorAll("#scanEditableTable tbody tr")];
+      const manualBody = document.querySelector("#manualTable tbody");
+      if (manualBody) {
+        manualBody.innerHTML = "";
+        let total = 0;
+        scanRows.forEach(tr => {
+          const name = tr.querySelector(".s-name").value;
+          const spec = tr.querySelector(".s-spec").value;
+          const unit = tr.querySelector(".s-unit").value;
+          const qty = tr.querySelector(".s-qty").value;
+          const price = tr.querySelector(".s-price").value;
+          const sub = tr.querySelector(".s-sub").value;
+          const note = tr.querySelector(".s-note").value;
+          const subNum = parseFloat(sub);
+          if (!isNaN(subNum)) total += subNum;
+          addManualRow(name, qty, price, price ? "" : sub, spec, unit, note);
+        });
+        const totalEl = document.getElementById("scanTotalAmt");
+        if (totalEl) totalEl.textContent = String(Math.round(total));
       }
     }
 
