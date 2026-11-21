@@ -55,7 +55,8 @@ from history_store import (
     summarize_history,
 )
 from invoice_parser import parse_einvoice_csv, parse_invoice_text
-from ocr_scanner import scan_document
+from ocr_cpsat_parser import extract_candidates_from_text, reconcile_items_with_cpsat
+from ocr_scanner import _detect_document_type, _recommend_sheet, scan_document
 from print_preview import (
     export_xlsx_to_pdf,
     render_pdf_to_pngs,
@@ -525,6 +526,61 @@ def api_parse_invoice_text():
         inv = parse_invoice_text(data.get("text", ""))
         return jsonify({
             "ok": True,
+            "invoice": {
+                "invoice_no": inv.invoice_no,
+                "roc_date": inv.roc_date,
+                "seller_name": inv.seller_name,
+                "total_amount": inv.total_amount,
+                "items": [
+                    {
+                        "name": it.name,
+                        "spec": it.spec,
+                        "unit": it.unit,
+                        "quantity": it.quantity,
+                        "unit_price": it.unit_price,
+                        "subtotal": it.subtotal,
+                        "note": it.note,
+                    }
+                    for it in inv.items
+                ],
+            },
+        })
+    except Exception as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 400
+
+
+@app.post("/api/parse-raw-ocr-cpsat")
+def api_parse_raw_ocr_cpsat():
+    try:
+        data = request.get_json(force=True)
+        raw_text = str(data.get("raw_text", "")).strip()
+        if not raw_text:
+            raise ValueError("請先輸入或貼上原始 OCR / PDF 文字")
+
+        inv = parse_invoice_text(raw_text)
+        total_raw = parse_number(str(data.get("total_amount", "")))
+        if total_raw is not None:
+            inv.total_amount = total_raw
+
+        candidates = extract_candidates_from_text(raw_text, inv)
+        verified = False
+        if candidates:
+            selected, verified = reconcile_items_with_cpsat(candidates, inv.total_amount)
+            if selected:
+                inv.items = selected
+                if inv.total_amount is None:
+                    tot = sum(i.subtotal for i in selected)
+                    inv.total_amount = int(tot) if float(tot).is_integer() else tot
+
+        cfg = load_config(CONFIG_PATH)
+        threshold = int(cfg.get("under_3000_threshold", 3000))
+        return jsonify({
+            "ok": True,
+            "engine": "raw-text+cpsat",
+            "cpsat_verified": verified,
+            "document_type": _detect_document_type(raw_text),
+            "recommended_sheet": _recommend_sheet(inv.total_amount, threshold=threshold),
+            "raw_text": raw_text,
             "invoice": {
                 "invoice_no": inv.invoice_no,
                 "roc_date": inv.roc_date,

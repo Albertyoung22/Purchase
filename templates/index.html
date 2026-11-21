@@ -872,12 +872,22 @@
       const totalVal = document.getElementById("rawOcrTotal")?.value || "";
       if (!rawText.trim()) return showStatus("請先輸入或貼上原始 OCR / PDF 文字", false);
       showStatus("正在使用 Google OR-Tools CP-SAT 求解器解析文字...");
-      const res = await fetch("/api/parse-raw-ocr-cpsat", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ raw_text: rawText, total_amount: totalVal })
-      });
-      const data = await res.json();
+      let data;
+      try {
+        const res = await fetch("/api/parse-raw-ocr-cpsat", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ raw_text: rawText, total_amount: totalVal })
+        });
+        const text = await res.text();
+        try {
+          data = JSON.parse(text);
+        } catch {
+          return showStatus(`CP-SAT 解析失敗 (HTTP ${res.status})`, false);
+        }
+      } catch (err) {
+        return showStatus("連線逾時或中斷：" + err.message, false);
+      }
       if (!data.ok) return showStatus(data.error, false);
       renderScanResult(data, true);
     }

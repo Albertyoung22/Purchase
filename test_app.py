@@ -37,6 +37,19 @@ class TestDesktopApp(unittest.TestCase):
         self.assertEqual(data["invoice"]["invoice_no"], "AB-87654321")
         self.assertEqual(len(data["invoice"]["items"]), 3)
 
+    def test_parse_raw_ocr_cpsat_api(self) -> None:
+        raw_text = "SHOWBA\nAB-87654321\n2026-11-18\nSponge 49 x 2 98TX\nMarker 25 x 4 100TX\n現金 500\n找零 302\n"
+        res = self.client.post(
+            "/api/parse-raw-ocr-cpsat",
+            json={"raw_text": raw_text, "total_amount": "198"},
+        )
+        self.assertEqual(res.status_code, 200)
+        data = res.get_json()
+        self.assertTrue(data["ok"])
+        self.assertTrue(data["cpsat_verified"])
+        self.assertEqual(sum(it["subtotal"] for it in data["invoice"]["items"]), 198)
+        self.assertEqual(len(data["invoice"]["items"]), 2)
+
     def test_preview_with_cpsat_auto_split(self) -> None:
         res = self.client.post(
             "/api/preview",
