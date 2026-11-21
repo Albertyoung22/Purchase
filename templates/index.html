@@ -203,7 +203,6 @@
         <button class="tab-btn active" onclick="switchTab('scan', this)">影像掃描（發票 / 估價單）</button>
         <button class="tab-btn" onclick="switchTab('invoice_text', this)">電子發票文字（如小北百貨）</button>
         <button class="tab-btn" onclick="switchTab('csv', this)">上傳 CSV 清單 / 財政部電子發票</button>
-        <button class="tab-btn" onclick="switchTab('manual', this)">手動輸入 / 掃描結果編輯</button>
       </div>
 
       <!-- Shared Header Metadata -->
@@ -314,8 +313,11 @@
         <div id="csvStatus" style="margin-top:8px; font-size:13px; color:var(--accent);"></div>
       </div>
 
-      <!-- Tab 3: Manual Entry -->
-      <div id="panel-manual" class="tab-panel">
+      <!-- Always-visible Editable Items & Receipt Metadata -->
+      <div id="panel-manual" style="margin-top:14px; padding-top:12px; border-top:1px dashed var(--border);">
+        <div style="font-size:13px; font-weight:700; color:var(--primary); margin-bottom:8px;">
+          品項明細與單據資訊（掃描自動帶入，亦可直接手動增修）
+        </div>
         <div class="row" style="margin-bottom:10px;">
           <div class="col">
             <label>資料來源類型</label>
@@ -917,25 +919,7 @@
           ${data.document_type ? `<strong>單據類型：</strong><span class="badge">${escapeHtml(data.document_type)}</span> ｜ ` : ''}
           <strong>總金額：</strong><span id="scanTotalAmt">${inv.total_amount ?? '(未辨識)'}</span> 元 ｜
           <strong>自動選用工作表：</strong><span class="badge ok">${escapeHtml(data.recommended_sheet)}</span>
-          <div style="margin-top:8px; display:flex; justify-content:space-between; align-items:center;">
-            <span style="font-size:12px; color:#065f46;">💡 可直接在下方表格修改品名、規格、單位、數量、單價或刪除／新增列，修改後會自動同步至產出表單：</span>
-            <button type="button" class="secondary" onclick="addScanEditRow()" style="padding:4px 10px; font-size:12px;">＋ 新增品項</button>
-          </div>
-          <table id="scanEditableTable" style="margin-top:6px;">
-            <thead><tr><th>品名（項目）</th><th style="width:110px;">規格</th><th style="width:62px;">單位</th><th style="width:68px;">數量</th><th style="width:86px;">單價</th><th style="width:90px;">小計</th><th style="width:110px;">備註</th><th style="width:46px;">刪</th></tr></thead>
-            <tbody>${(inv.items && inv.items.length ? inv.items : [{name: (data.document_type || '發票') + '採購', spec: '', unit: '批', quantity: 1, unit_price: '', subtotal: inv.total_amount ?? '', note: ''}]).map(i => `
-              <tr>
-                <td><input type="text" class="s-name" value="${escapeHtml(i.name)}" oninput="syncScanTableToManual(this)" /></td>
-                <td><input type="text" class="s-spec" value="${escapeHtml(i.spec || '')}" oninput="syncScanTableToManual(this)" /></td>
-                <td><input type="text" class="s-unit" value="${escapeHtml(i.unit || '')}" oninput="syncScanTableToManual(this)" /></td>
-                <td><input type="number" class="s-qty" value="${i.quantity ?? 1}" oninput="syncScanTableToManual(this, true)" /></td>
-                <td><input type="number" class="s-price" value="${i.unit_price ?? ''}" placeholder="選填" oninput="syncScanTableToManual(this, true)" /></td>
-                <td><input type="number" class="s-sub" value="${i.subtotal ?? ''}" oninput="syncScanTableToManual(this, false)" /></td>
-                <td><input type="text" class="s-note" value="${escapeHtml(i.note || '')}" oninput="syncScanTableToManual(this)" /></td>
-                <td><button type="button" class="danger" onclick="this.closest('tr').remove(); syncScanTableToManual();" style="padding:4px 8px; font-size:12px;">刪</button></td>
-              </tr>`).join('')}
-            </tbody>
-          </table>
+          ${(!inv.items || !inv.items.length) ? `<div style="margin-top:6px; color:#991b1b; font-weight:600;">未能自動解析出明細金額，請於下方品項明細補填金額，或展開「原始文字」用 CP-SAT 解析。</div>` : ''}
           <details style="margin-top:8px;" ${preserveRawOpen ? 'open' : ''}>
             <summary style="cursor:pointer; font-weight:600;">檢視 / 編輯原始 OCR / PDF 文字（可用 CP-SAT 轉為 7 欄明細）</summary>
             <textarea id="rawOcrEditor" style="margin-top:6px; min-height:140px;">${escapeHtml(data.raw_text || '')}</textarea>
