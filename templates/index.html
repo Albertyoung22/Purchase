@@ -196,15 +196,10 @@
     <!-- Step 1 (was Step 2): Data Source -->
     <div class="card">
       <div class="card-title">
-        <span>步驟 1：選擇資料來源（影像掃描 / 文字 / CSV / 手動）</span>
+        <span>步驟 1：匯入單據（圖片 / PDF / CSV / 文字）或直接填寫明細</span>
         <span id="tplStatus" class="badge ok">
           {{ '使用範本：' + template_name if has_template else '使用內建標準格式' }}
         </span>
-      </div>
-      <div class="tabs">
-        <button class="tab-btn active" onclick="switchTab('scan', this)">影像掃描（發票 / 估價單）</button>
-        <button class="tab-btn" onclick="switchTab('invoice_text', this)">電子發票文字（如小北百貨）</button>
-        <button class="tab-btn" onclick="switchTab('csv', this)">上傳 CSV 清單 / 財政部電子發票</button>
       </div>
 
       <!-- Shared Header Metadata -->
@@ -261,58 +256,48 @@
         </div>
       </div>
 
-      <!-- Tab 0: Image Scan (Invoice / Quotation) -->
+      <!-- Unified File Import (Image / PDF / CSV) + Collapsible Text Paste -->
       <div id="panel-scan" class="tab-panel active">
         <div class="row">
-          <div class="col">
-            <label>上傳發票或估價單（圖片 .jpg/.png/.webp 或 電子發票 .pdf，可多選批次掃描）</label>
-            <input type="file" id="scanFile" accept=".jpg,.jpeg,.png,.webp,.bmp,.pdf" multiple />
+          <div class="col" style="flex:2;">
+            <label>上傳單據檔案（支援圖片 .jpg/.png、PDF、或批次 CSV，圖片/PDF 可多選）</label>
+            <input type="file" id="scanFile" accept=".jpg,.jpeg,.png,.webp,.bmp,.pdf,.csv" multiple />
           </div>
-          <div style="width:180px;">
-            <label>PDF 密碼（若有加密再填）</label>
-            <input type="text" id="pdfPassword" placeholder="如統編或身分證" />
+          <div style="width:150px;">
+            <label>PDF 密碼（選填）</label>
+            <input type="text" id="pdfPassword" placeholder="統編或身分證" />
           </div>
           <div class="col">
-            <label>Gemini API Key（選填；留空則使用內建離線辨識）</label>
+            <label>Gemini API Key（選填；留空用離線辨識）</label>
             <input type="text" id="geminiKey" placeholder="選填：填入後改用 Gemini Vision" />
           </div>
           <div>
-            <button class="accent" onclick="scanDocumentImage()">開始掃描分析</button>
+            <button class="accent" onclick="scanDocumentImage()">開始匯入分析</button>
           </div>
+        </div>
+        <div style="margin-top:8px; display:flex; gap:14px; flex-wrap:wrap; align-items:center; font-size:12px; color:var(--muted);">
+          <details style="margin:0;">
+            <summary style="margin:0; display:inline; font-size:12px;">📋 或直接貼上發票／報價單純文字（如小北百貨、LINE 報價）</summary>
+            <div style="margin-top:8px; padding:10px; background:#f8fafc; border:1px solid var(--border); border-radius:6px; min-width:540px;">
+              <textarea id="invoiceText" style="min-height:95px;" placeholder="請貼上電子發票或估價單文字（例如小北百貨明細）...">{{ sample_invoice }}</textarea>
+              <div style="margin-top:6px; display:flex; gap:8px; align-items:center;">
+                <button type="button" class="accent" onclick="parsePastedTextToTable()">以 CP-SAT 解析文字 → 帶入下方明細</button>
+              </div>
+            </div>
+          </details>
+          <details style="margin:0;">
+            <summary style="margin:0; display:inline; font-size:12px;">⚙ CSV 匯入選項與範例下載</summary>
+            <div style="margin-top:8px; padding:10px; background:#f8fafc; border:1px solid var(--border); border-radius:6px; display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+              <select id="csvKind" style="width:auto;">
+                <option value="standard">標準採購明細／發票 CSV（如 requests_sample.csv）</option>
+                <option value="einvoice">財政部電子發票匯出 CSV</option>
+              </select>
+              <a href="/api/sample-csv" style="font-size:12px;">下載標準範例 CSV</a>
+              <span id="csvStatus" style="font-size:12px; color:var(--accent);"></span>
+            </div>
+          </details>
         </div>
         <div id="scanResultBox" style="margin-top:12px; display:none;"></div>
-      </div>
-
-      <!-- Tab 1: Invoice Text -->
-      <div id="panel-invoice_text" class="tab-panel">
-        <label>貼上電子發票明細文字</label>
-        <textarea id="invoiceText" placeholder="請貼上小北百貨或一般電子發票證明聯與明細文字...">{{ sample_invoice }}</textarea>
-        <div style="margin-top:8px; display:flex; gap:8px;">
-          <button class="secondary" onclick="parseInvoicePreview()">解析發票預覽</button>
-        </div>
-        <div id="invoiceParsedBox" style="margin-top:10px; display:none;"></div>
-      </div>
-
-      <!-- Tab 2: CSV Upload -->
-      <div id="panel-csv" class="tab-panel">
-        <div class="row">
-          <div class="col">
-            <label>CSV 類型</label>
-            <select id="csvKind">
-              <option value="standard">標準採購明細／發票 CSV（如 requests_sample.csv）</option>
-              <option value="einvoice">財政部電子發票匯出 CSV</option>
-            </select>
-          </div>
-          <div class="col">
-            <label>選擇 CSV 檔案</label>
-            <input type="file" id="csvFile" accept=".csv" />
-          </div>
-          <div>
-            <button onclick="uploadCsv()">上傳 CSV</button>
-            <a href="/api/sample-csv" style="margin-left:8px; font-size:13px;">下載標準範例 CSV</a>
-          </div>
-        </div>
-        <div id="csvStatus" style="margin-top:8px; font-size:13px; color:var(--accent);"></div>
       </div>
 
       <!-- Always-visible Editable Items & Receipt Metadata -->
@@ -808,8 +793,23 @@
 
     async function scanDocumentImage() {
       const files = [...(document.getElementById("scanFile").files || [])];
-      if (!files.length) return showStatus("請先選擇發票或估價單檔案", false);
+      if (!files.length) return showStatus("請先選擇圖片、PDF 或 CSV 檔案", false);
 
+      // Auto-handle CSV files if selected in unified file picker
+      if (files.length === 1 && files[0].name.toLowerCase().endsWith(".csv")) {
+        currentMode = "csv";
+        const fd = new FormData();
+        fd.append("file", files[0]);
+        const res = await fetch("/api/upload-csv", { method: "POST", body: fd });
+        const data = await res.json();
+        if (!data.ok) return showStatus(data.error, false);
+        const csvStatusEl = document.getElementById("csvStatus");
+        if (csvStatusEl) csvStatusEl.textContent = "已上傳 CSV：" + data.filename;
+        showStatus("CSV 上傳成功：" + data.filename + "（請直接點步驟 2「預覽分單結果」或「產出 Excel 請購單」）");
+        return;
+      }
+
+      currentMode = "scan";
       const pdfPw = document.getElementById("pdfPassword").value.trim();
       const geminiKey = document.getElementById("geminiKey").value.trim();
 
@@ -1025,6 +1025,26 @@
       }
       if (!data.ok) return showStatus(data.error, false);
       renderScanResult(data, true);
+    }
+
+    async function parsePastedTextToTable() {
+      const rawText = document.getElementById("invoiceText")?.value || "";
+      if (!rawText.trim()) return showStatus("請先貼上發票或報價單文字", false);
+      currentMode = "scan";
+      showStatus("正在解析文字並帶入明細表...");
+      let data;
+      try {
+        const res = await fetch("/api/parse-raw-ocr-cpsat", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ raw_text: rawText })
+        });
+        data = await res.json();
+      } catch (err) {
+        return showStatus("文字解析失敗：" + err.message, false);
+      }
+      if (!data.ok) return showStatus(data.error, false);
+      renderScanResult(data, false);
     }
 
     function showStatus(msg, isOk = true) {
