@@ -50,6 +50,27 @@ class TestDesktopApp(unittest.TestCase):
         self.assertEqual(sum(it["subtotal"] for it in data["invoice"]["items"]), 198)
         self.assertEqual(len(data["invoice"]["items"]), 2)
 
+        # Tabular numbered quotation lines + spaced '合 計' noise
+        quote_text = (
+            "項次  品名/規格  數量  單位  單 價  複 價  備 註\n"
+            "1  25mm屏風H122*W45  20  片  1,500  30,000\n"
+            "2  25mm屏風H122*W70  20  片  1,850  37,000\n"
+            "3  25mm屏風H122*W120  10  片  3,100  31,000\n"
+            "合 計  98,000\n"
+        )
+        res_q = self.client.post(
+            "/api/parse-raw-ocr-cpsat",
+            json={"raw_text": quote_text, "total_amount": "98000"},
+        )
+        data_q = res_q.get_json()
+        self.assertTrue(data_q["ok"])
+        self.assertTrue(data_q["cpsat_verified"])
+        self.assertEqual(len(data_q["invoice"]["items"]), 3)
+        self.assertEqual(data_q["invoice"]["items"][0]["unit"], "片")
+        self.assertEqual(data_q["invoice"]["items"][0]["quantity"], 20)
+        self.assertEqual(data_q["invoice"]["items"][0]["unit_price"], 1500)
+        self.assertEqual(data_q["invoice"]["items"][0]["subtotal"], 30000)
+
     def test_preview_with_cpsat_auto_split(self) -> None:
         res = self.client.post(
             "/api/preview",

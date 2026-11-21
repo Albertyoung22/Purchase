@@ -29,17 +29,23 @@ class CandidateItem:
 _NOISE_WORDS = ("現金", "找零", "信用卡", "悠遊卡", "LINEPAY", "刷卡", "實付", "應付", "稅額", "免稅", "應稅")
 
 
+_SUMMARY_WORDS = ("總計", "合計", "小計", "總金額", "隨機碼", "統編", "統一編號", "日期")
+
+
 def extract_candidates_from_text(raw_text: str, parsed: ParsedInvoice) -> list[CandidateItem]:
     """Build CandidateItem list from parsed items and any extra numeric lines in raw_text."""
     candidates: list[CandidateItem] = []
     seen_names: set[str] = set()
 
     for it in parsed.items:
+        compact = it.name.replace(" ", "").replace("\u3000", "")
+        if any(sw in compact for sw in _SUMMARY_WORDS):
+            continue
         arith_ok = (
             it.unit_price is not None
             and abs((it.quantity * it.unit_price) - it.subtotal) < 0.01
         )
-        is_noise = any(nw in it.name.replace(" ", "").upper() for nw in _NOISE_WORDS)
+        is_noise = any(nw in compact.upper() for nw in _NOISE_WORDS)
         candidates.append(
             CandidateItem(
                 name=it.name,
@@ -56,16 +62,59 @@ def extract_candidates_from_text(raw_text: str, parsed: ParsedInvoice) -> list[C
         )
         seen_names.add(it.name)
 
-    # Also scan raw lines for fallback "name  amount" patterns that might be missed or payment lines
+    # Tabular quotation/order lines: "[idx]  name  qty  [unit]  unit_price  subtotal  [note]"
+    table_line_re = re.compile(
+        r"^(?:(?P<idx>\d+)\s+)?(?P<name>\S.*?)\s+(?P<qty>\d+(?:\.\d+)?)\s+"
+        r"(?:(?P<unit>[^\d\s,.$]{1,4})\s+)?\$?(?P<price>\d+(?:,\d{3})*(?:\.\d+)?)\s+"
+        r"\$?(?P<sub>\d+(?:,\d{3})*(?:\.\d+)?)(?:\s+(?P<note>.*))?$"
+    )
+    # Fallback "name  amount" lines
     line_num_re = re.compile(r"^(?P<name>[^\d\s].*?)\s+\$?(?P<amt>\d+(?:,\d{3})*(?:\.\d+)?)\s*(?P<tx>TX|T)?\s*$")
+
     for line in raw_text.splitlines():
         s = line.strip()
+        if not s:
+            continue
+
+        m_tab = table_line_re.match(s)
+        if m_tab:
+            raw_name = m_tab.group("name").strip()
+            compact_raw = raw_name.replace(" ", "").replace("\u3000", "")
+            if any(k in compact_raw for k in _SUMMARY_WORDS):
+                continue
+            qty_f = float(m_tab.group("qty"))
+            price_f = float(m_tab.group("price").replace(",", ""))
+            sub_f = float(m_tab.group("sub").replace(",", ""))
+            if abs(qty_f * price_f - sub_f) < 0.5:
+                name, spec = split_name_and_spec(raw_name)
+                if name and name not in seen_names:
+                    qty_c: int | float = int(qty_f) if qty_f.is_integer() else qty_f
+                    price_c: int | float = int(price_f) if price_f.is_integer() else price_f
+                    sub_c: int | float = int(sub_f) if sub_f.is_integer() else sub_f
+                    is_noise = any(nw in name.replace(" ", "").upper() for nw in _NOISE_WORDS)
+                    candidates.append(
+                        CandidateItem(
+                            name=name,
+                            spec=spec,
+                            unit=(m_tab.group("unit") or "").strip(),
+                            quantity=qty_c,
+                            unit_price=price_c,
+                            subtotal=sub_c,
+                            note=(m_tab.group("note") or "").strip(),
+                            arithmetic_ok=True,
+                            is_noise_hint=is_noise,
+                        )
+                    )
+                    seen_names.add(name)
+                continue
+
         m = line_num_re.match(s)
         if not m:
             continue
         raw_name = m.group("name").strip()
+        compact_raw = raw_name.replace(" ", "").replace("\u3000", "")
         name, spec = split_name_and_spec(raw_name)
-        if name in seen_names or any(k in raw_name for k in ("總計", "合計", "隨機碼", "統編", "統一編號", "日期")):
+        if name in seen_names or any(k in compact_raw for k in _SUMMARY_WORDS):
             continue
         amt = float(m.group("amt").replace(",", ""))
         amt_clean: int | float = int(amt) if amt.is_integer() else amt
