@@ -477,7 +477,11 @@
       <div class="card">
         <div class="card-title">
           <span>出差行程與費用明細</span>
-          <button type="button" class="secondary" onclick="addTravelDayRow()">＋ 新增一日行程</button>
+          <div style="display:flex; gap:8px; align-items:center;">
+            <span id="travelLiveTotalBadge" class="badge">合計：NT$ 0</span>
+            <button type="button" class="secondary" onclick="resetTravelForm()" style="padding:4px 10px; font-size:12px;">清空重填</button>
+            <button type="button" class="secondary" onclick="addTravelDayRow()">＋ 新增一日行程</button>
+          </div>
         </div>
         <div style="background:#f0fdf4; border:1px solid #bbf7d0; border-radius:8px; padding:10px 12px; margin-bottom:10px;">
           <div class="row" style="align-items:center; gap:8px;">
@@ -519,7 +523,7 @@
           <div id="travelSmartResult" style="font-size:12px; color:var(--accent); margin-top:6px;"></div>
         </div>
         <p style="font-size:12px; color:var(--muted); margin:0 0 8px;">
-          也可直接在表格「起訖地點」輸入 <code>土城高中 -&gt; 教育局</code> 後點該列「算里程」，或手動指定 <code>A-&gt;B:14, B-&gt;A:14</code>。
+          依臺南市最新規定：住宿費平日上限 3,500／假日（含放假日前一天，不含最後一天）4,500（單程未達 60km 須事前核准）；出差事畢請於 15 日內送審。
         </p>
         <div style="overflow-x:auto;">
           <table id="travelDaysTable" style="font-size:12px;">
@@ -1153,6 +1157,27 @@
         </div>
       `;
       }).join("");
+
+      const totalAmt = data.requests.reduce((acc, r) => acc + Number(r.total_amount || 0), 0);
+      const payerVal = document.getElementById("payerName").value.trim();
+      const warnings = [];
+      if (totalAmt > 150000) {
+        warnings.push("⚠ 總金額超過 15 萬元（小額採購上限），請確認採購程序並切勿化整為零分批辦理。");
+      }
+      if (payerVal && totalAmt >= 10000) {
+        warnings.push("💡 代墊款項達 1 萬元以上，送件請記得檢附專案簽准簽呈。");
+      }
+      const greenKw = ["影印紙", "碳粉", "墨水", "電腦", "螢幕", "LED", "燈管", "空調", "冷氣", "飲水機", "印表機", "冰箱"];
+      const greenHits = data.requests.flatMap(r => r.items || []).filter(it => greenKw.some(k => (it.name || "").includes(k))).map(it => it.name);
+      if (greenHits.length) {
+        warnings.push(`🌿 偵測到疑似綠色採購指定項目（${escapeHtml(greenHits.slice(0, 3).join("、"))}），請確認環保標章欄位。`);
+      }
+      if (warnings.length) {
+        document.getElementById("previewArea").insertAdjacentHTML(
+          "beforeend",
+          `<div style="margin-top:8px; padding:8px 12px; background:#fef3c7; border:1px solid #fde68a; border-radius:6px; font-size:12px; color:#92400e;">${warnings.join("<br>")}</div>`
+        );
+      }
     }
 
     async function printPreview() {
@@ -1804,6 +1829,8 @@
         }
       });
       showTravelStatus(`試算完成：合計 ${data.grand_total.toLocaleString()} 元（${data.chinese_upper}）`);
+      const badge = document.getElementById("travelLiveTotalBadge");
+      if (badge) badge.textContent = `合計：NT$ ${data.grand_total.toLocaleString()}`;
       document.getElementById("travelPreviewArea").innerHTML = `
         <table>
           <thead><tr><th>月日</th><th>起訖地點</th><th>火車</th><th>高鐵/飛機</th><th>客運/捷運</th><th>自行車</th><th>自用汽車</th><th>自用機車</th><th>住宿</th><th>雜費</th><th>總計</th><th>備註</th></tr></thead>
@@ -1930,6 +1957,20 @@
       targetRow.querySelector(".t-rc").value = "1";
       showTravelStatus(`已辨識單據（${data.summary}）並帶入行程明細！`);
       previewTravel();
+    }
+
+    function resetTravelForm() {
+      document.getElementById("travelPurpose").value = "";
+      document.getElementById("travelDestination").value = "";
+      document.getElementById("travelDaysBody").innerHTML = "";
+      document.getElementById("travelPreviewArea").innerHTML = "";
+      document.getElementById("travelPrintArea").style.display = "none";
+      document.getElementById("travelStatus").className = "status-bar";
+      const badge = document.getElementById("travelLiveTotalBadge");
+      if (badge) badge.textContent = "合計：NT$ 0";
+      resetTravelStops();
+      addTravelDayRow();
+      onTravelDateChange();
     }
 
     addTravelDayRow();
