@@ -547,8 +547,11 @@ def parse_travel_receipt(
     if m_dt:
         mm_dd = f"{int(m_dt.group(2)):02d}/{int(m_dt.group(3)):02d}"
 
-    # Detect stations
-    found_stations = [st for st in _THSR_STATIONS if st in compact]
+    # Detect stations in the order they appear in the ticket text
+    found_stations = sorted(
+        (st for st in _THSR_STATIONS if st in compact),
+        key=lambda st: compact.find(st),
+    )
     route_text = "→".join(found_stations[:2]) if len(found_stations) >= 2 else ""
 
     if any(k in compact.upper() for k in ("高鐵", "高速鐵路", "THSR", "T-EX")):

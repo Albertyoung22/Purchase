@@ -628,6 +628,7 @@ class TestDesktopApp(unittest.TestCase):
         page.insert_text(
             (50, 50),
             "台灣高速鐵路 THSR\n2026/11/21\n台南 -> 台北\n票價 1350\n",
+            fontname="china-t",
         )
         pdf_bytes = doc.tobytes()
         doc.close()
