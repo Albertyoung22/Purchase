@@ -351,7 +351,7 @@
               <th style="width:88px;">單價</th>
               <th style="width:100px;">金額(免填單價時)</th>
               <th style="min-width:105px;">備註</th>
-              <th style="width:58px;">操作</th>
+              <th style="width:44px; text-align:center;">操作</th>
             </tr>
           </thead>
           <tbody></tbody>
@@ -1044,7 +1044,7 @@
         <td><input type="number" class="m-price" value="${price}" placeholder="選填" /></td>
         <td><input type="number" class="m-sub" value="${sub}" placeholder="選填" /></td>
         <td><input type="text" class="m-note" value="${note}" placeholder="備註" /></td>
-        <td><button class="secondary" onclick="this.closest('tr').remove()" style="white-space:nowrap; padding:6px 8px;">刪除</button></td>
+        <td style="text-align:center;"><button type="button" onclick="this.closest('tr').remove()" style="color:#b91c1c; background:#fef2f2; border:1px solid #fecaca; padding:5px 8px; font-size:12px; white-space:nowrap;">刪</button></td>
       `;
       tbody.appendChild(tr);
     }
