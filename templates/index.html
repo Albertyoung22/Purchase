@@ -184,6 +184,7 @@
     <div class="main-nav">
       <button class="main-nav-btn active" onclick="switchMainView('work', this)">採購申請作業</button>
       <button class="main-nav-btn" onclick="switchMainView('travel', this)">國內出差旅費</button>
+      <button class="main-nav-btn" onclick="switchMainView('substitute', this)">代課勞健保與印領清冊</button>
       <button class="main-nav-btn" onclick="switchMainView('history', this)">
         累積採購紀錄與統計 <span id="historyCountBadge" class="badge" style="margin-left:6px;">0</span>
       </button>
@@ -553,6 +554,88 @@
         <div id="travelPrintArea" style="margin-top:12px; display:none;"></div>
       </div>
     </div><!-- /#view-travel -->
+
+    <!-- Separate Tab View: Substitute Teacher Insurance & Hourly Pay Roster -->
+    <div id="view-substitute" class="main-view">
+      <div class="card">
+        <div class="card-title">
+          <span>代課教師勞健保試算暨鐘點費印領清冊（臺南市教育局最新規定）</span>
+          <span id="subLiveTotalBadge" class="badge ok">實領合計：NT$ 0｜機關負擔：NT$ 0</span>
+        </div>
+        <p style="margin:0 0 12px; font-size:13px; color:var(--muted);">
+          依 114/09/01 生效鐘點費（國小 405 / 國中 455 / 高中職 505 元）及 115 年（最低工資 29,500 元）／114 年（28,590 元）勞保 12.5%、健保 5.17%、勞退 6%、二代健保 2.11% 自動試算並產出雙頁 Excel 清冊。
+        </p>
+        <div class="row">
+          <div class="col" style="flex:2;">
+            <label>學校／機關名稱</label>
+            <input type="text" id="subSchoolName" placeholder="例如：臺南市立○○國民小學" />
+          </div>
+          <div style="width:110px;">
+            <label>民國年</label>
+            <select id="subRocYear">
+              <option value="115" selected>115年 (2026)</option>
+              <option value="114">114年 (2025)</option>
+            </select>
+          </div>
+          <div style="width:90px;">
+            <label>月份</label>
+            <input type="number" id="subMonth" min="1" max="12" value="11" />
+          </div>
+          <div class="col" style="flex:2;">
+            <label>案別／計畫名稱</label>
+            <input type="text" id="subPlanName" value="教師請假短期代課鐘點費" />
+          </div>
+          <div class="col">
+            <label>預算科目代碼（選填）</label>
+            <input type="text" id="subBudgetCode" placeholder="例如：115-人事費" />
+          </div>
+          <div style="width:115px;">
+            <label>職災費率 (%)</label>
+            <input type="number" id="subOccRate" step="0.01" min="0" value="0.13" />
+          </div>
+        </div>
+
+        <div style="margin-top:12px; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px;">
+          <strong style="font-size:13px; color:var(--primary);">代課教師與投保明細</strong>
+          <div style="display:flex; gap:8px;">
+            <button type="button" class="secondary" onclick="addSubstituteRow()">+ 新增一列教師</button>
+          </div>
+        </div>
+
+        <div style="overflow-x:auto; margin-top:8px;">
+          <table id="substituteTable">
+            <thead>
+              <tr>
+                <th style="min-width:95px;">教師姓名</th>
+                <th style="min-width:105px;">身分證(選填)</th>
+                <th style="min-width:120px;">代課科目/說明</th>
+                <th style="min-width:120px;">學制單價</th>
+                <th style="width:78px;">自訂單價</th>
+                <th style="width:68px;">節數</th>
+                <th style="min-width:112px;">投保模式</th>
+                <th style="width:62px;">天數</th>
+                <th style="width:58px;">眷口</th>
+                <th style="width:66px;">自提%</th>
+                <th style="width:66px;">月底健保</th>
+                <th style="width:74px;">所得稅</th>
+                <th style="min-width:110px;">備註</th>
+                <th style="width:44px; text-align:center;">操作</th>
+              </tr>
+            </thead>
+            <tbody id="substituteBody"></tbody>
+          </table>
+        </div>
+
+        <div style="margin-top:12px; display:flex; gap:10px; flex-wrap:wrap;">
+          <button type="button" class="secondary" onclick="previewSubstitute()">試算勞健保與印領明細</button>
+          <button type="button" onclick="printPreviewSubstitute()">真實列印預覽 (PDF)</button>
+          <button type="button" class="accent" onclick="generateSubstitute()">產出印領清冊暨機關負擔表 (.xlsx)</button>
+        </div>
+        <div id="substituteStatus" class="status-bar"></div>
+        <div id="substitutePreviewArea" style="margin-top:12px;"></div>
+        <div id="substitutePrintArea" style="margin-top:12px; display:none;"></div>
+      </div>
+    </div><!-- /#view-substitute -->
 
     <!-- Separate Tab View: Template & Settings -->
     <div id="view-settings" class="main-view">
@@ -2019,6 +2102,174 @@
 
     addTravelDayRow();
     onTravelDateChange();
+
+    // === Substitute Teacher Insurance & Hourly Pay Module ===
+    function showSubstituteStatus(msg, isOk = true) {
+      const bar = document.getElementById("substituteStatus");
+      bar.textContent = msg;
+      bar.className = "status-bar " + (isOk ? "ok" : "err");
+    }
+
+    function addSubstituteRow(data = {}) {
+      const tbody = document.getElementById("substituteBody");
+      const tr = document.createElement("tr");
+      const lvl = data.school_level || "elementary";
+      const mode = data.enroll_mode || "part_time";
+      const eom = data.nhi_end_of_month !== undefined ? !!data.nhi_end_of_month : true;
+      tr.innerHTML = `
+        <td><input type="text" class="s-name" value="${escapeHtml(data.teacher_name || "")}" placeholder="姓名" /></td>
+        <td><input type="text" class="s-id" value="${escapeHtml(data.id_number || "")}" placeholder="選填" /></td>
+        <td><input type="text" class="s-subj" value="${escapeHtml(data.subject_note || "")}" placeholder="如：五年甲班數學" /></td>
+        <td>
+          <select class="s-level" onchange="onSubLevelChange(this)">
+            <option value="elementary" ${lvl === "elementary" ? "selected" : ""}>國小 (405)</option>
+            <option value="junior" ${lvl === "junior" ? "selected" : ""}>國中 (455)</option>
+            <option value="senior" ${lvl === "senior" ? "selected" : ""}>高中職 (505)</option>
+            <option value="custom" ${lvl === "custom" ? "selected" : ""}>自訂單價</option>
+          </select>
+        </td>
+        <td><input type="number" class="s-rate" value="${escapeHtml(data.hourly_rate || "")}" placeholder="自動" /></td>
+        <td><input type="number" class="s-periods" step="0.5" min="0" value="${escapeHtml(data.periods ?? 10)}" /></td>
+        <td>
+          <select class="s-mode">
+            <option value="part_time" ${mode === "part_time" ? "selected" : ""}>部分工時</option>
+            <option value="full_month" ${mode === "full_month" ? "selected" : ""}>全月加保</option>
+            <option value="supp_only" ${mode === "supp_only" ? "selected" : ""}>僅二代健保</option>
+          </select>
+        </td>
+        <td><input type="number" class="s-days" min="0" max="30" value="${escapeHtml(data.insured_days ?? 30)}" /></td>
+        <td><input type="number" class="s-deps" min="0" max="5" value="${escapeHtml(data.dependents ?? 0)}" /></td>
+        <td><input type="number" class="s-vol" min="0" max="6" step="1" value="${escapeHtml(data.voluntary_pension_pct ?? 0)}" /></td>
+        <td style="text-align:center;"><input type="checkbox" class="s-eom" ${eom ? "checked" : ""} title="月底在保計收健保" style="width:auto;" /></td>
+        <td><input type="number" class="s-tax" min="0" value="${escapeHtml(data.income_tax ?? 0)}" /></td>
+        <td><input type="text" class="s-note" value="${escapeHtml(data.note || "")}" placeholder="備註" /></td>
+        <td style="text-align:center;"><button type="button" onclick="this.closest('tr').remove()" style="color:#b91c1c; background:#fef2f2; border:1px solid #fecaca; padding:5px 8px; font-size:12px; white-space:nowrap;">刪</button></td>
+      `;
+      tbody.appendChild(tr);
+    }
+
+    function onSubLevelChange(sel) {
+      const tr = sel.closest("tr");
+      const rateInp = tr.querySelector(".s-rate");
+      if (sel.value !== "custom") rateInp.value = "";
+    }
+
+    function buildSubstitutePayload() {
+      const entries = [...document.querySelectorAll("#substituteBody tr")].map(tr => ({
+        teacher_name: tr.querySelector(".s-name").value.trim(),
+        id_number: tr.querySelector(".s-id").value.trim(),
+        subject_note: tr.querySelector(".s-subj").value.trim(),
+        school_level: tr.querySelector(".s-level").value,
+        hourly_rate: tr.querySelector(".s-rate").value,
+        periods: tr.querySelector(".s-periods").value,
+        enroll_mode: tr.querySelector(".s-mode").value,
+        insured_days: tr.querySelector(".s-days").value,
+        dependents: tr.querySelector(".s-deps").value,
+        voluntary_pension_pct: tr.querySelector(".s-vol").value,
+        nhi_end_of_month: tr.querySelector(".s-eom").checked,
+        income_tax: tr.querySelector(".s-tax").value,
+        note: tr.querySelector(".s-note").value.trim(),
+      }));
+      const fallbackSchool = document.getElementById("schoolName")?.value.trim() || "臺南市立○○國民小學";
+      return {
+        school_name: document.getElementById("subSchoolName").value.trim() || fallbackSchool,
+        roc_year: document.getElementById("subRocYear").value,
+        month: document.getElementById("subMonth").value,
+        plan_name: document.getElementById("subPlanName").value.trim(),
+        budget_code: document.getElementById("subBudgetCode").value.trim(),
+        occ_rate: document.getElementById("subOccRate").value,
+        entries,
+      };
+    }
+
+    async function previewSubstitute() {
+      const res = await fetch("/api/substitute/preview", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(buildSubstitutePayload()),
+      });
+      const data = await res.json();
+      if (!data.ok) return showSubstituteStatus(data.error, false);
+      const t = data.totals;
+      const badge = document.getElementById("subLiveTotalBadge");
+      if (badge) badge.textContent = `實領合計：NT$ ${t.net_pay.toLocaleString()}｜機關負擔：NT$ ${t.employer_total.toLocaleString()}`;
+      showSubstituteStatus(`試算完成：應領 ${t.gross_pay.toLocaleString()} 元，實領 ${t.net_pay.toLocaleString()} 元（${data.chinese_upper_net}），機關負擔 ${t.employer_total.toLocaleString()} 元`);
+      document.getElementById("substitutePreviewArea").innerHTML = `
+        <table>
+          <thead>
+            <tr>
+              <th>姓名</th><th>節數×單價</th><th>應領</th><th>勞保(級距)</th><th>健保(級距)</th>
+              <th>勞退自提</th><th>二代健保</th><th>所得稅</th><th>實領金額</th>
+              <th>機關勞/職/健/退合計</th><th>備註</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${data.items.map(i => `<tr>
+              <td>${escapeHtml(i.teacher_name)}</td>
+              <td>${i.periods} × ${i.hourly_rate}</td>
+              <td>${i.gross_pay.toLocaleString()}</td>
+              <td>${i.li_employee.toLocaleString()} <span style="color:#64748b;font-size:11px;">(${i.li_bracket.toLocaleString()})</span></td>
+              <td>${i.nhi_employee.toLocaleString()} <span style="color:#64748b;font-size:11px;">(${i.nhi_bracket.toLocaleString()})</span></td>
+              <td>${i.pension_employee.toLocaleString()}</td>
+              <td>${i.nhi_supp.toLocaleString()}</td>
+              <td>${i.income_tax.toLocaleString()}</td>
+              <td><strong>${i.net_pay.toLocaleString()}</strong></td>
+              <td>${i.employer_total.toLocaleString()} <span style="color:#64748b;font-size:11px;">(${i.li_employer}/${i.occ_employer}/${i.nhi_employer}/${i.pension_employer})</span></td>
+              <td style="font-size:12px;">${escapeHtml(i.note)}</td>
+            </tr>`).join("")}
+            <tr style="background:#f8fafc; font-weight:700;">
+              <td colspan="2">合計</td>
+              <td>${t.gross_pay.toLocaleString()}</td>
+              <td>${t.li_employee.toLocaleString()}</td>
+              <td>${t.nhi_employee.toLocaleString()}</td>
+              <td>${t.pension_employee.toLocaleString()}</td>
+              <td>${t.nhi_supp.toLocaleString()}</td>
+              <td>${t.income_tax.toLocaleString()}</td>
+              <td>${t.net_pay.toLocaleString()}</td>
+              <td>${t.employer_total.toLocaleString()}</td>
+              <td>人事費總計：${t.school_grand_total.toLocaleString()} 元</td>
+            </tr>
+          </tbody>
+        </table>
+      `;
+    }
+
+    async function printPreviewSubstitute() {
+      showSubstituteStatus("正在產生代課鐘點費印領清冊列印預覽...");
+      const res = await fetch("/api/substitute/print-preview", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(buildSubstitutePayload()),
+      });
+      const data = await res.json();
+      if (!data.ok) return showSubstituteStatus(data.error, false);
+      const box = document.getElementById("substitutePrintArea");
+      box.style.display = "block";
+      if (data.mode === "excel_pdf") {
+        box.innerHTML = `<iframe src="${data.pdf_url}?t=${Date.now()}" style="width:100%; height:680px; border:1px solid #cbd5e1; border-radius:6px; background:#fff;"></iframe>`;
+        showSubstituteStatus("真實 PDF 列印預覽已載入！");
+      } else {
+        box.innerHTML = `<div style="overflow-x:auto; background:#fff; padding:12px;">${data.html}</div>`;
+        showSubstituteStatus("雲端表單預覽已產生！");
+      }
+    }
+
+    async function generateSubstitute() {
+      const res = await fetch("/api/substitute/generate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(buildSubstitutePayload()),
+      });
+      const data = await res.json();
+      if (!data.ok) return showSubstituteStatus(data.error, false);
+      const t = data.totals;
+      showSubstituteStatus(`已產出清冊（實領 ${t.net_pay.toLocaleString()} 元、機關負擔 ${t.employer_total.toLocaleString()} 元）：`);
+      document.getElementById("substitutePreviewArea").innerHTML = `
+        <div class="file-list"><a href="/api/download/${encodeURIComponent(data.filename)}">下載 ${escapeHtml(data.filename)}</a></div>
+      `;
+    }
+
+    addSubstituteRow({ teacher_name: "王小明", subject_note: "五年甲班國語代課", school_level: "elementary", periods: 16, enroll_mode: "part_time", insured_days: 30 });
   </script>
 </body>
 </html>

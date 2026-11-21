@@ -36,6 +36,13 @@ from fill_purchase_forms import (
     split_requests_opt,
 )
 from travel_distance import calculate_route_mileage, optimize_route_with_cpsat, parse_stops_text
+from substitute_builder import (
+    DEFAULT_OCC_RATE,
+    SubstituteEntry,
+    SubstituteRoster,
+    build_substitute_roster_xlsx,
+    summarize_roster,
+)
 from travel_form_builder import (
     RouteSegment,
     TravelDayEntry,
@@ -1006,6 +1013,143 @@ def api_travel_print_preview():
         xlsx_path = preview_dir / "國內出差旅費報告表.xlsx"
         build_travel_report_xlsx(report, xlsx_path)
         pdf_path = preview_dir / "國內出差旅費報告表.pdf"
+
+        if export_xlsx_to_pdf(xlsx_path, pdf_path):
+            pngs = render_pdf_to_pngs(pdf_path, preview_dir, prefix=xlsx_path.stem)
+            return jsonify({
+                "ok": True,
+                "mode": "excel_pdf",
+                "pdf_url": f"/api/preview-file/{preview_id}/{pdf_path.name}",
+                "page_urls": [f"/api/preview-file/{preview_id}/{p.name}" for p in pngs],
+                "total_forms": 1,
+            })
+
+        return jsonify({
+            "ok": True,
+            "mode": "html_fallback",
+            "html": render_xlsx_fallback_html(xlsx_path),
+            "total_forms": 1,
+        })
+    except Exception as exc:
+        return jsonify({"ok": False, "error": f"列印預覽失敗：{exc}"}), 400
+
+
+def _substitute_roster_from_payload(payload: dict[str, Any]) -> SubstituteRoster:
+    raw_entries = payload.get("entries") or []
+    entries: list[SubstituteEntry] = []
+    for row in raw_entries:
+        name = str(row.get("teacher_name", "")).strip()
+        if not name:
+            continue
+        entries.append(
+            SubstituteEntry(
+                teacher_name=name,
+                id_number=str(row.get("id_number", "")).strip(),
+                subject_note=str(row.get("subject_note", "")).strip(),
+                school_level=str(row.get("school_level", "elementary")),
+                hourly_rate=int(parse_number(row.get("hourly_rate")) or 0),
+                periods=float(parse_number(row.get("periods")) or 0),
+                enroll_mode=str(row.get("enroll_mode", "part_time")),
+                insured_days=int(parse_number(row.get("insured_days")) if row.get("insured_days") not in (None, "") else 30),
+                dependents=int(parse_number(row.get("dependents")) or 0),
+                voluntary_pension_pct=float(parse_number(row.get("voluntary_pension_pct")) or 0),
+                nhi_end_of_month=bool(row.get("nhi_end_of_month", True)),
+                nhi_enrolled_here=bool(row.get("nhi_enrolled_here", False)),
+                income_tax=int(parse_number(row.get("income_tax")) or 0),
+                note=str(row.get("note", "")).strip(),
+            )
+        )
+    if not entries:
+        raise ValueError("請至少輸入一位代課教師資料")
+    occ_raw = parse_number(payload.get("occ_rate"))
+    occ_rate = (float(occ_raw) / 100.0) if occ_raw is not None else DEFAULT_OCC_RATE
+    return SubstituteRoster(
+        school_name=str(payload.get("school_name") or "臺南市立○○國民小學").strip(),
+        roc_year=int(parse_number(payload.get("roc_year")) or 115),
+        month=int(parse_number(payload.get("month")) or 11),
+        plan_name=str(payload.get("plan_name") or "教師請假短期代課鐘點費").strip(),
+        budget_code=str(payload.get("budget_code") or "").strip(),
+        occ_rate=occ_rate,
+        entries=entries,
+    )
+
+
+@app.post("/api/substitute/preview")
+def api_substitute_preview():
+    try:
+        payload = request.get_json(force=True)
+        roster = _substitute_roster_from_payload(payload)
+        items, totals = summarize_roster(roster)
+        return jsonify({
+            "ok": True,
+            "items": [
+                {
+                    "teacher_name": i.teacher_name,
+                    "subject_note": i.subject_note,
+                    "hourly_rate": i.hourly_rate,
+                    "periods": i.periods,
+                    "gross_pay": i.gross_pay,
+                    "enroll_mode": i.enroll_mode,
+                    "insured_days": i.insured_days,
+                    "li_bracket": i.li_bracket,
+                    "nhi_bracket": i.nhi_bracket,
+                    "pension_bracket": i.pension_bracket,
+                    "li_employee": i.li_employee,
+                    "nhi_employee": i.nhi_employee,
+                    "pension_employee": i.pension_employee,
+                    "nhi_supp": i.nhi_supp,
+                    "income_tax": i.income_tax,
+                    "total_deduction": i.total_deduction,
+                    "net_pay": i.net_pay,
+                    "li_employer": i.li_employer,
+                    "occ_employer": i.occ_employer,
+                    "nhi_employer": i.nhi_employer,
+                    "pension_employer": i.pension_employer,
+                    "employer_total": i.employer_total,
+                    "note": i.note,
+                }
+                for i in items
+            ],
+            "totals": totals,
+            "chinese_upper_net": amount_to_chinese_upper(totals["net_pay"]),
+        })
+    except Exception as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 400
+
+
+@app.post("/api/substitute/generate")
+def api_substitute_generate():
+    try:
+        payload = request.get_json(force=True)
+        roster = _substitute_roster_from_payload(payload)
+        OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+        safe_plan = sanitize_filename(f"{roster.roc_year}年{roster.month}月_代課鐘點費印領清冊")
+        out_path = OUTPUT_DIR / f"{safe_plan}.xlsx"
+        build_substitute_roster_xlsx(roster, out_path)
+        _, totals = summarize_roster(roster)
+        return jsonify({
+            "ok": True,
+            "filename": out_path.name,
+            "totals": totals,
+            "chinese_upper_net": amount_to_chinese_upper(totals["net_pay"]),
+        })
+    except Exception as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 400
+
+
+@app.post("/api/substitute/print-preview")
+def api_substitute_print_preview():
+    try:
+        payload = request.get_json(force=True)
+        roster = _substitute_roster_from_payload(payload)
+        preview_root = OUTPUT_DIR / "_preview"
+        _cleanup_old_previews(preview_root)
+        preview_id = uuid.uuid4().hex[:12]
+        preview_dir = preview_root / preview_id
+        preview_dir.mkdir(parents=True, exist_ok=True)
+        xlsx_path = preview_dir / "代課鐘點費印領清冊.xlsx"
+        build_substitute_roster_xlsx(roster, xlsx_path)
+        pdf_path = preview_dir / "代課鐘點費印領清冊.pdf"
 
         if export_xlsx_to_pdf(xlsx_path, pdf_path):
             pngs = render_pdf_to_pngs(pdf_path, preview_dir, prefix=xlsx_path.stem)
