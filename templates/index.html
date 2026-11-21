@@ -1290,7 +1290,7 @@
       `;
       }).join("");
 
-      const totalAmt = data.requests.reduce((acc, r) => acc + Number(r.total_amount || 0), 0);
+      const totalAmt = reqs.reduce((acc, r) => acc + Number(r.total_amount || 0), 0);
       const payerVal = document.getElementById("payerName").value.trim();
       const warnings = [];
       if (totalAmt > 150000) {
@@ -1300,7 +1300,7 @@
         warnings.push("💡 代墊款項達 1 萬元以上，送件請記得檢附專案簽准簽呈。");
       }
       const greenKw = ["影印紙", "碳粉", "墨水", "電腦", "螢幕", "LED", "燈管", "空調", "冷氣", "飲水機", "印表機", "冰箱"];
-      const greenHits = data.requests.flatMap(r => r.items || []).filter(it => greenKw.some(k => (it.name || "").includes(k))).map(it => it.name);
+      const greenHits = reqs.flatMap(r => r.items || []).filter(it => greenKw.some(k => (it.name || "").includes(k))).map(it => it.name);
       if (greenHits.length) {
         warnings.push(`🌿 偵測到疑似綠色採購指定項目（${escapeHtml(greenHits.slice(0, 3).join("、"))}），請確認環保標章欄位。`);
       }
@@ -1398,27 +1398,38 @@
     }
 
     async function generateExcel() {
-      const res = await fetch("/api/generate", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(buildPayload())
-      });
-      const data = await res.json();
-      if (!data.ok) return showStatus(data.error, false);
-      renderPreview(data.requests);
-      const dl = document.getElementById("downloadArea");
-      const zipUrl = "/api/download-zip?files=" + encodeURIComponent(data.files.join(","));
-      dl.innerHTML = `<strong>下載產出檔案：</strong>` +
-        data.files.map(f => `<a href="/api/download/${encodeURIComponent(f)}">${f}</a>`).join("") +
-        (data.files.length > 1 ? `<a href="${zipUrl}" style="background:#ecfdf5; border-color:#a7f3d0; color:#065f46;">全部打包下載 (.zip)</a>` : "");
-      showStatus(`成功產出 ${data.files.length} 份 Excel 請購單！`);
-      if (IS_CLOUD && Array.isArray(data.history_entries) && data.history_entries.length) {
-        appendLocalHistory(data.history_entries);
-      }
-      await loadHistory();
-      const savedLocal = await autoSaveFilesToLocalFolder(data.files || []);
-      if (savedLocal > 0) {
-        showStatus(`成功產出 ${data.files.length} 份 Excel 請購單，並已自動寫入本機資料夾！`);
+      showStatus("正在產出 Excel 請購單...");
+      try {
+        const res = await fetch("/api/generate", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(buildPayload())
+        });
+        const text = await res.text();
+        let data;
+        try {
+          data = JSON.parse(text);
+        } catch {
+          return showStatus(`產出失敗：伺服器回應異常 (HTTP ${res.status})`, false);
+        }
+        if (!data.ok) return showStatus(data.error, false);
+        renderPreview(data.requests);
+        const dl = document.getElementById("downloadArea");
+        const zipUrl = "/api/download-zip?files=" + encodeURIComponent(data.files.join(","));
+        dl.innerHTML = `<strong>下載產出檔案：</strong>` +
+          data.files.map(f => `<a href="/api/download/${encodeURIComponent(f)}">${f}</a>`).join("") +
+          (data.files.length > 1 ? `<a href="${zipUrl}" style="background:#ecfdf5; border-color:#a7f3d0; color:#065f46;">全部打包下載 (.zip)</a>` : "");
+        showStatus(`成功產出 ${data.files.length} 份 Excel 請購單！`);
+        if (IS_CLOUD && Array.isArray(data.history_entries) && data.history_entries.length) {
+          appendLocalHistory(data.history_entries);
+        }
+        await loadHistory();
+        const savedLocal = await autoSaveFilesToLocalFolder(data.files || []);
+        if (savedLocal > 0) {
+          showStatus(`成功產出 ${data.files.length} 份 Excel 請購單，並已自動寫入本機資料夾！`);
+        }
+      } catch (err) {
+        showStatus("產出 Excel 發生錯誤：" + (err?.message || err), false);
       }
     }
 
