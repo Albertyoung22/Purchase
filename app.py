@@ -644,11 +644,12 @@ def api_generate():
             reqs = chunk_requests_by_max_rows(reqs, max_rows=max_rows)
 
         files = generate_from_requests(tpl, reqs, OUTPUT_DIR, cfg)
-        append_history(HISTORY_PATH, reqs, files)
+        history_entries = append_history(HISTORY_PATH, reqs, files)
         return jsonify({
             "ok": True,
             "files": [f.name for f in files],
             "requests": _serialize_requests(reqs),
+            "history_entries": history_entries,
         })
     except Exception as exc:
         return jsonify({"ok": False, "error": str(exc)}), 400
