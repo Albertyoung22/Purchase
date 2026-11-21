@@ -2411,8 +2411,14 @@
     }
 
     async function syncLocalFolderWrite() {
-      if (!localDirHandle || localDirPermission !== "granted") return;
+      if (!localDirHandle) return;
       try {
+        const perm = await localDirHandle.queryPermission({ mode: "readwrite" });
+        localDirPermission = perm;
+        if (perm !== "granted") {
+          updateLocalSyncUI();
+          return;
+        }
         let prefs = {};
         let travelPrefs = {};
         let customCfg = null;
@@ -2428,24 +2434,48 @@
           custom_config: customCfg,
         });
         await writeJsonToDir(localDirHandle, "purchase_history.json", getLocalHistory());
-      } catch {}
+      } catch (err) {
+        const info = document.getElementById("localSyncStatusText");
+        if (info) info.textContent = "⚠ 本機資料夾寫入失敗：" + (err?.message || err);
+      }
     }
 
     async function autoSaveFilesToLocalFolder(filenames) {
-      if (!localDirHandle || localDirPermission !== "granted" || !filenames.length) return 0;
+      if (!localDirHandle || !filenames.length) return 0;
+      try {
+        let perm = await localDirHandle.queryPermission({ mode: "readwrite" });
+        if (perm !== "granted") {
+          perm = await localDirHandle.requestPermission({ mode: "readwrite" });
+        }
+        localDirPermission = perm;
+        updateLocalSyncUI();
+        if (perm !== "granted") {
+          showStatus("本機資料夾未授權寫入，請點右上角「📁」按鈕重新授權", false);
+          return 0;
+        }
+      } catch (err) {
+        showStatus("檢查本機資料夾權限失敗：" + (err?.message || err), false);
+        return 0;
+      }
       let count = 0;
       for (const fname of filenames) {
         try {
           const res = await fetch("/api/download/" + encodeURIComponent(fname));
-          if (!res.ok) continue;
+          if (!res.ok) {
+            showStatus(`自動寫入本機失敗：無法下載 ${fname} (HTTP ${res.status})`, false);
+            continue;
+          }
           const blob = await res.blob();
           const fh = await localDirHandle.getFileHandle(fname, { create: true });
           const w = await fh.createWritable();
           await w.write(blob);
           await w.close();
           count++;
-        } catch {}
+        } catch (err) {
+          showStatus(`自動寫入本機檔案 ${fname} 失敗：` + (err?.message || err), false);
+        }
       }
+      if (count > 0) await syncLocalFolderWrite();
       return count;
     }
 
