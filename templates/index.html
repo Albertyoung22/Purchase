@@ -172,12 +172,13 @@
       <h1 id="appTitle">學校採購申請單自動化系統｜國內出差旅費</h1>
       <div class="sub">支援電子發票／估價單 OCR 掃描、CP-SAT 最佳化分單、國內出差旅費報支與順路里程計算（設定存於本機瀏覽器）</div>
     </div>
-    {% if not is_cloud %}
-    <div style="display:flex; gap:8px;">
+    <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+      <button id="localSyncBtn" class="secondary" onclick="connectLocalFolder()" style="font-size:12px;">📁 綁定本機資料夾</button>
+      {% if not is_cloud %}
       <button class="secondary" onclick="openOutputFolder()">開啟輸出資料夾</button>
       <button class="danger" onclick="shutdownApp()">關閉程式</button>
+      {% endif %}
     </div>
-    {% endif %}
   </header>
 
   <div class="container">
@@ -647,11 +648,14 @@
       <p style="margin:0 0 10px; font-size:13px; color:var(--muted);">
         系統會自動在您目前的瀏覽器記住個人常用欄位（<strong>預算科目代碼、請購單位、代墊人、常用用途、Gemini API Key、自動分單開關與金額上限</strong>）{% if is_cloud %}以及您的<strong>累積採購紀錄</strong>與自訂座標設定{% endif %}，伺服器端不留存任何個人資料。更換電腦時可使用 JSON 備份匯出／匯入。
       </p>
-      <div style="display:flex; gap:8px; flex-wrap:wrap;">
-        <button class="accent" onclick="exportPersonalBackup()">匯出個人設定與紀錄備份 (.json)</button>
+      <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center;">
+        <button class="accent" onclick="connectLocalFolder()">📁 綁定／讀取本機資料夾（自動讀寫設定、紀錄與 Excel）</button>
+        <button class="secondary" onclick="disconnectLocalFolder()">解除本機資料夾綁定</button>
+        <button class="secondary" onclick="exportPersonalBackup()">匯出個人設定與紀錄備份 (.json)</button>
         <button class="secondary" onclick="document.getElementById('backupImportFile').click()">匯入個人備份 (.json)</button>
         <button class="secondary" onclick="resetUserPrefs()">重設個人偏好預設值</button>
       </div>
+      <div id="localSyncStatusText" style="margin-top:8px; font-size:12px; color:var(--muted);"></div>
     </div>
     <div class="card">
       <div class="card-title">
@@ -736,6 +740,7 @@
           max_amount: document.getElementById("maxAmount").value,
         };
         localStorage.setItem(PREFS_STORAGE_KEY, JSON.stringify(prefs));
+        syncLocalFolderWrite();
       } catch {}
     }
 
@@ -1411,6 +1416,10 @@
         appendLocalHistory(data.history_entries);
       }
       await loadHistory();
+      const savedLocal = await autoSaveFilesToLocalFolder(data.files || []);
+      if (savedLocal > 0) {
+        showStatus(`成功產出 ${data.files.length} 份 Excel 請購單，並已自動寫入本機資料夾！`);
+      }
     }
 
     function getLocalHistory() {
@@ -1426,6 +1435,7 @@
     function setLocalHistory(records) {
       try {
         localStorage.setItem(HISTORY_STORAGE_KEY, JSON.stringify(records));
+        syncLocalFolderWrite();
       } catch {}
     }
 
@@ -2006,6 +2016,9 @@
       document.getElementById("travelPreviewArea").innerHTML = `
         <div class="file-list"><a href="/api/download/${encodeURIComponent(data.filename)}">下載 ${data.filename}</a></div>
       `;
+      if (await autoSaveFilesToLocalFolder([data.filename])) {
+        showTravelStatus(`已產出報支表（總計 ${data.grand_total.toLocaleString()} 元），並已自動寫入本機資料夾！`);
+      }
     }
 
     const TRAVEL_PREFS_KEY = "purchase_app_travel_prefs_v1";
@@ -2267,9 +2280,221 @@
       document.getElementById("substitutePreviewArea").innerHTML = `
         <div class="file-list"><a href="/api/download/${encodeURIComponent(data.filename)}">下載 ${escapeHtml(data.filename)}</a></div>
       `;
+      if (await autoSaveFilesToLocalFolder([data.filename])) {
+        showSubstituteStatus(`已產出清冊（實領 ${t.net_pay.toLocaleString()} 元、機關負擔 ${t.employer_total.toLocaleString()} 元），並已自動寫入本機資料夾！`);
+      }
     }
 
     addSubstituteRow({ teacher_name: "王小明", subject_note: "五年甲班國語代課", school_level: "elementary", periods: 16, enroll_mode: "part_time", insured_days: 30 });
+
+    // === Local Folder Sync (File System Access API + IndexedDB) ===
+    const FS_DB_NAME = "purchase_local_fs_db_v1";
+    const FS_STORE_NAME = "handles";
+    const FS_HANDLE_KEY = "local_dir_handle";
+    let localDirHandle = null;
+    let localDirPermission = "none";
+
+    function openFsDb() {
+      return new Promise((resolve, reject) => {
+        if (!window.indexedDB) return reject(new Error("No IndexedDB"));
+        const req = indexedDB.open(FS_DB_NAME, 1);
+        req.onupgradeneeded = () => {
+          if (!req.result.objectStoreNames.contains(FS_STORE_NAME)) {
+            req.result.createObjectStore(FS_STORE_NAME);
+          }
+        };
+        req.onsuccess = () => resolve(req.result);
+        req.onerror = () => reject(req.error);
+      });
+    }
+
+    async function saveDirHandleToIdb(handle) {
+      const db = await openFsDb();
+      return new Promise((resolve, reject) => {
+        const tx = db.transaction(FS_STORE_NAME, "readwrite");
+        if (handle) tx.objectStore(FS_STORE_NAME).put(handle, FS_HANDLE_KEY);
+        else tx.objectStore(FS_STORE_NAME).delete(FS_HANDLE_KEY);
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => reject(tx.error);
+      });
+    }
+
+    async function loadDirHandleFromIdb() {
+      try {
+        const db = await openFsDb();
+        return await new Promise((resolve) => {
+          const tx = db.transaction(FS_STORE_NAME, "readonly");
+          const req = tx.objectStore(FS_STORE_NAME).get(FS_HANDLE_KEY);
+          req.onsuccess = () => resolve(req.result || null);
+          req.onerror = () => resolve(null);
+        });
+      } catch {
+        return null;
+      }
+    }
+
+    function updateLocalSyncUI() {
+      const btn = document.getElementById("localSyncBtn");
+      const info = document.getElementById("localSyncStatusText");
+      if (!window.showDirectoryPicker) {
+        if (btn) btn.style.display = "none";
+        if (info) info.textContent = "目前瀏覽器不支援直接存取本機資料夾（建議使用 Chrome 或 Edge），系統已自動改存於瀏覽器本機空間。";
+        return;
+      }
+      if (!localDirHandle) {
+        if (btn) {
+          btn.textContent = "📁 綁定本機資料夾";
+          btn.title = "綁定後可自動讀寫本機設定檔、紀錄檔與產出的 Excel";
+        }
+        if (info) info.textContent = "尚未綁定本機資料夾（目前暫存於瀏覽器 localStorage）。綁定後每次開啟可一鍵從本機讀取並自動寫回檔案。";
+      } else if (localDirPermission === "granted") {
+        if (btn) {
+          btn.textContent = `📁 本機已同步：${localDirHandle.name}`;
+          btn.title = "設定、紀錄與產出的 Excel 會自動寫入此本機資料夾";
+        }
+        if (info) info.textContent = `✅ 已連結本機資料夾「${localDirHandle.name}」：自動讀寫 purchase_settings.json、purchase_history.json 及產出的 .xlsx。`;
+      } else {
+        if (btn) {
+          btn.textContent = `📁 點此載入本機「${localDirHandle.name}」`;
+          btn.title = "瀏覽器重新開啟後需點一下授權即可讀取本機資料夾";
+        }
+        if (info) info.textContent = `🔒 已記住本機資料夾「${localDirHandle.name}」，請點上方「綁定／讀取本機資料夾」授權後載入本機檔案。`;
+      }
+    }
+
+    async function readJsonFromDir(dirHandle, filename) {
+      try {
+        const fh = await dirHandle.getFileHandle(filename);
+        const file = await fh.getFile();
+        return JSON.parse(await file.text());
+      } catch {
+        return null;
+      }
+    }
+
+    async function writeJsonToDir(dirHandle, filename, obj) {
+      const fh = await dirHandle.getFileHandle(filename, { create: true });
+      const w = await fh.createWritable();
+      await w.write(JSON.stringify(obj, null, 2));
+      await w.close();
+    }
+
+    async function loadFromLocalFolder() {
+      if (!localDirHandle || localDirPermission !== "granted") return;
+      const settingsObj = await readJsonFromDir(localDirHandle, "purchase_settings.json");
+      if (settingsObj) {
+        if (settingsObj.prefs) localStorage.setItem(PREFS_STORAGE_KEY, JSON.stringify(settingsObj.prefs));
+        if (settingsObj.travel_prefs) localStorage.setItem(TRAVEL_PREFS_KEY, JSON.stringify(settingsObj.travel_prefs));
+        if (settingsObj.custom_config) localStorage.setItem(CONFIG_STORAGE_KEY, JSON.stringify(settingsObj.custom_config, null, 2));
+        loadUserPrefs();
+        if (typeof loadTravelPrefs === "function") loadTravelPrefs();
+      }
+      const historyObj = await readJsonFromDir(localDirHandle, "purchase_history.json");
+      if (Array.isArray(historyObj)) {
+        localStorage.setItem(HISTORY_STORAGE_KEY, JSON.stringify(historyObj));
+        if (typeof loadHistory === "function") await loadHistory();
+      }
+      if (!settingsObj || !historyObj) {
+        await syncLocalFolderWrite();
+      }
+    }
+
+    async function syncLocalFolderWrite() {
+      if (!localDirHandle || localDirPermission !== "granted") return;
+      try {
+        let prefs = {};
+        let travelPrefs = {};
+        let customCfg = null;
+        try { prefs = JSON.parse(localStorage.getItem(PREFS_STORAGE_KEY) || "{}"); } catch {}
+        try { travelPrefs = JSON.parse(localStorage.getItem(TRAVEL_PREFS_KEY) || "{}"); } catch {}
+        try {
+          const rawCfg = localStorage.getItem(CONFIG_STORAGE_KEY);
+          if (rawCfg) customCfg = JSON.parse(rawCfg);
+        } catch {}
+        await writeJsonToDir(localDirHandle, "purchase_settings.json", {
+          prefs,
+          travel_prefs: travelPrefs,
+          custom_config: customCfg,
+        });
+        await writeJsonToDir(localDirHandle, "purchase_history.json", getLocalHistory());
+      } catch {}
+    }
+
+    async function autoSaveFilesToLocalFolder(filenames) {
+      if (!localDirHandle || localDirPermission !== "granted" || !filenames.length) return 0;
+      let count = 0;
+      for (const fname of filenames) {
+        try {
+          const res = await fetch("/api/download/" + encodeURIComponent(fname));
+          if (!res.ok) continue;
+          const blob = await res.blob();
+          const fh = await localDirHandle.getFileHandle(fname, { create: true });
+          const w = await fh.createWritable();
+          await w.write(blob);
+          await w.close();
+          count++;
+        } catch {}
+      }
+      return count;
+    }
+
+    async function connectLocalFolder() {
+      if (!window.showDirectoryPicker) {
+        return showStatus("此瀏覽器不支援直接存取本機資料夾，請改用 Chrome 或 Edge。", false);
+      }
+      try {
+        if (localDirHandle && localDirPermission !== "granted") {
+          const perm = await localDirHandle.requestPermission({ mode: "readwrite" });
+          if (perm === "granted") {
+            localDirPermission = "granted";
+            await loadFromLocalFolder();
+            updateLocalSyncUI();
+            return showStatus(`已讀取並同步本機資料夾「${localDirHandle.name}」！`);
+          }
+        }
+        const picked = await window.showDirectoryPicker({ mode: "readwrite" });
+        const perm = await picked.requestPermission({ mode: "readwrite" });
+        if (perm !== "granted") return showStatus("未取得本機資料夾讀寫權限", false);
+        localDirHandle = picked;
+        localDirPermission = "granted";
+        await saveDirHandleToIdb(picked);
+        await loadFromLocalFolder();
+        updateLocalSyncUI();
+        showStatus(`已綁定本機資料夾「${picked.name}」，設定、紀錄與 Excel 將自動同步至本機！`);
+      } catch (err) {
+        if (err && err.name === "AbortError") return;
+        showStatus("綁定本機資料夾失敗：" + err.message, false);
+      }
+    }
+
+    async function disconnectLocalFolder() {
+      localDirHandle = null;
+      localDirPermission = "none";
+      await saveDirHandleToIdb(null);
+      updateLocalSyncUI();
+      showStatus("已解除本機資料夾綁定（改回僅存於瀏覽器）");
+    }
+
+    async function initLocalFolderSync() {
+      if (!window.showDirectoryPicker) {
+        updateLocalSyncUI();
+        return;
+      }
+      const saved = await loadDirHandleFromIdb();
+      if (saved) {
+        localDirHandle = saved;
+        try {
+          localDirPermission = await saved.queryPermission({ mode: "readwrite" });
+        } catch {
+          localDirPermission = "prompt";
+        }
+        if (localDirPermission === "granted") {
+          await loadFromLocalFolder();
+        }
+      }
+      updateLocalSyncUI();
+    }
+    initLocalFolderSync();
   </script>
 </body>
 </html>
