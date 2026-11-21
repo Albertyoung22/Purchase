@@ -461,6 +461,8 @@ class TestFillPurchaseForms(unittest.TestCase):
             ws.column_dimensions["F"].width = 5.0
             ws.column_dimensions["G"].width = 6.0
             ws.column_dimensions["H"].width = 7.0
+            ws["A33"] = "請購人"
+            ws["A33"].alignment = openpyxl.styles.Alignment(vertical="center", textRotation=255)
             wb.save(tpl_path)
 
             req = PurchaseRequest(
@@ -472,6 +474,7 @@ class TestFillPurchaseForms(unittest.TestCase):
             )
             files = generate_from_requests(tpl_path, [req], out_dir, cfg)
             out_ws = openpyxl.load_workbook(files[0]).active
+            self.assertEqual(out_ws["A33"].alignment.horizontal, "center")
             self.assertGreaterEqual(out_ws.column_dimensions["F"].width, 8.5)
             self.assertGreaterEqual(out_ws.column_dimensions["G"].width, 11.5)
             self.assertGreaterEqual(out_ws.column_dimensions["H"].width, 13.5)

@@ -536,6 +536,16 @@ def fill_worksheet(ws: Worksheet, req: PurchaseRequest, cfg: dict[str, Any]) -> 
             if cur_w is None or cur_w < min_w:
                 ws.column_dimensions[c_let].width = min_w
 
+    # Center-align vertical label cells (e.g. '請購人' with textRotation=255) so LibreOffice matches '處室主任'
+    for row in ws.iter_rows(min_row=1, max_row=ws.max_row, max_col=10):
+        for cell in row:
+            if cell.has_style and cell.alignment and cell.alignment.textRotation == 255:
+                if not cell.alignment.horizontal:
+                    align = copy(cell.alignment)
+                    align.horizontal = "center"
+                    align.vertical = align.vertical or "center"
+                    cell.alignment = align
+
     _configure_single_page_print(ws)
 
 
