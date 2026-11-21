@@ -371,6 +371,26 @@ class TestDesktopApp(unittest.TestCase):
                 self.assertEqual(img_res.status_code, 200)
                 img_res.close()
 
+                # Multi-form auto_split -> merged multi-page PDF
+                res_multi = self.client.post(
+                    "/api/print-preview",
+                    json={
+                        "mode": "manual",
+                        "budget_code": "321",
+                        "department": "總務處",
+                        "auto_split": True,
+                        "max_amount": 3000,
+                        "items": [
+                            {"name": "品項A", "unit": "個", "quantity": 1, "unit_price": 2000},
+                            {"name": "品項B", "unit": "個", "quantity": 1, "unit_price": 2000},
+                        ],
+                    },
+                )
+                multi_data = res_multi.get_json()
+                self.assertTrue(multi_data["ok"])
+                self.assertEqual(multi_data["total_forms"], 2)
+                self.assertGreaterEqual(len(multi_data["page_urls"]), 2)
+
     def test_cumulative_history_api(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             tmp_dir = Path(tmp)

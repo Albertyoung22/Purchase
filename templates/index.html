@@ -1099,7 +1099,7 @@
         box.innerHTML = `
           <div style="padding:12px; border:1px solid #bfdbfe; background:#eff6ff; border-radius:8px;">
             <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; flex-wrap:wrap; gap:8px;">
-              <strong>真實 PDF 列印預覽（共 ${data.total_forms} 份，顯示第 1 份，共 ${data.page_urls.length} 頁）</strong>
+              <strong>真實 PDF 列印預覽（共 ${data.total_forms} 份，合計 ${data.page_urls.length} 頁，可直接全部列印）</strong>
               <div style="display:flex; gap:8px;">
                 <button onclick="printEmbeddedPdf()">直接列印 PDF</button>
                 <a href="${pdfSrc}" target="_blank" style="padding:6px 12px; background:#0f766e; color:#fff; border-radius:6px; text-decoration:none; font-size:13px; font-weight:600;">新分頁開啟 / 下載 PDF</a>

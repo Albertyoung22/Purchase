@@ -58,6 +58,7 @@ from invoice_parser import parse_einvoice_csv, parse_invoice_text
 from ocr_cpsat_parser import extract_candidates_from_text, reconcile_items_with_cpsat
 from ocr_scanner import _detect_document_type, _recommend_sheet, scan_document
 from print_preview import (
+    export_multiple_xlsx_to_merged_pdf,
     export_xlsx_to_pdf,
     render_pdf_to_pngs,
     render_xlsx_fallback_html,
@@ -693,11 +694,11 @@ def api_print_preview():
         preview_dir = preview_root / preview_id
         preview_dir.mkdir(parents=True, exist_ok=True)
         files = generate_from_requests(tpl, reqs, preview_dir, cfg)
-        first_xlsx = files[0]
-        pdf_path = preview_dir / f"{first_xlsx.stem}.pdf"
+        merged_stem = files[0].stem if len(files) == 1 else "採購申請單_合併列印"
+        pdf_path = preview_dir / f"{merged_stem}.pdf"
 
-        if export_xlsx_to_pdf(first_xlsx, pdf_path):
-            pngs = render_pdf_to_pngs(pdf_path, preview_dir, prefix=first_xlsx.stem)
+        if export_multiple_xlsx_to_merged_pdf(files, pdf_path):
+            pngs = render_pdf_to_pngs(pdf_path, preview_dir, prefix=merged_stem)
             return jsonify({
                 "ok": True,
                 "mode": "excel_pdf",
@@ -706,10 +707,13 @@ def api_print_preview():
                 "total_forms": len(files),
             })
 
+        combined_html = '<div style="page-break-after:always; margin:18px 0; border-top:2px dashed #cbd5e1;"></div>'.join(
+            render_xlsx_fallback_html(f) for f in files
+        )
         return jsonify({
             "ok": True,
             "mode": "html_fallback",
-            "html": render_xlsx_fallback_html(first_xlsx),
+            "html": combined_html,
             "total_forms": len(files),
         })
     except Exception as exc:

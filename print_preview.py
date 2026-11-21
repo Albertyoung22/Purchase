@@ -95,6 +95,37 @@ def export_xlsx_to_pdf(xlsx_path: Path, pdf_path: Path) -> bool:
     return export_xlsx_to_pdf_with_libreoffice(xlsx_path, pdf_path)
 
 
+def export_multiple_xlsx_to_merged_pdf(xlsx_paths: list[Path], merged_pdf_path: Path) -> bool:
+    """Export all generated .xlsx forms to PDF and merge them into a single multi-page PDF."""
+    if not xlsx_paths:
+        return False
+    if len(xlsx_paths) == 1:
+        return export_xlsx_to_pdf(xlsx_paths[0], merged_pdf_path)
+
+    import pymupdf
+
+    part_pdfs: list[Path] = []
+    for idx, x_path in enumerate(xlsx_paths, start=1):
+        p_pdf = merged_pdf_path.parent / f"_part_{idx}_{x_path.stem}.pdf"
+        if not export_xlsx_to_pdf(x_path, p_pdf):
+            return False
+        part_pdfs.append(p_pdf)
+
+    merged = pymupdf.open()
+    try:
+        for p_pdf in part_pdfs:
+            with pymupdf.open(str(p_pdf)) as src:
+                merged.insert_pdf(src)
+        merged_pdf_path.parent.mkdir(parents=True, exist_ok=True)
+        merged.save(str(merged_pdf_path))
+    finally:
+        merged.close()
+        for p_pdf in part_pdfs:
+            p_pdf.unlink(missing_ok=True)
+
+    return merged_pdf_path.exists()
+
+
 def render_pdf_to_pngs(pdf_path: Path, out_dir: Path, prefix: str = "preview") -> list[Path]:
     """Render each page of a PDF to PNG using PyMuPDF for crisp inline preview."""
     import pymupdf
