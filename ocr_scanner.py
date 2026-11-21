@@ -34,8 +34,30 @@ def _get_rapid_ocr() -> Any:
     if _OCR_ENGINE is None:
         from rapidocr_onnxruntime import RapidOCR
 
-        _OCR_ENGINE = RapidOCR()
+        try:
+            _OCR_ENGINE = RapidOCR(intra_op_num_threads=1, inter_op_num_threads=1)
+        except Exception:
+            _OCR_ENGINE = RapidOCR()
     return _OCR_ENGINE
+
+
+def _prepare_ocr_image(image_path: Path, tmp_dir: Path, max_dim: int = 1600) -> Path:
+    """Fix EXIF orientation and downscale oversized photos to prevent OOM/502 on 512MB cloud hosts."""
+    from PIL import Image, ImageOps
+
+    with Image.open(image_path) as img:
+        img = ImageOps.exif_transpose(img)
+        w, h = img.size
+        if max(w, h) <= max_dim:
+            return image_path
+        scale = max_dim / float(max(w, h))
+        new_size = (max(1, int(w * scale)), max(1, int(h * scale)))
+        resized = img.resize(new_size, Image.Resampling.LANCZOS)
+        if resized.mode not in ("RGB", "L"):
+            resized = resized.convert("RGB")
+        out_path = tmp_dir / f"{image_path.stem}_resized.jpg"
+        resized.save(out_path, format="JPEG", quality=88)
+        return out_path
 
 
 def _group_ocr_boxes_into_lines(ocr_result: list[Any], y_tolerance: float = 14.0) -> str:
@@ -412,7 +434,7 @@ def _scan_pdf(
         # Fallback for scanned/image-only PDFs (or when Gemini Vision is requested)
         with tempfile.TemporaryDirectory() as tmp:
             img_path = Path(tmp) / "page_1.png"
-            pix = doc[0].get_pixmap(dpi=200)
+            pix = doc[0].get_pixmap(dpi=150)
             pix.save(str(img_path))
             return scan_document(img_path, gemini_api_key=gemini_api_key, threshold=threshold)
     finally:
@@ -427,6 +449,9 @@ def scan_document(
     threshold: int = 3000,
 ) -> ScanResult:
     """Scan an invoice/quotation (image or PDF) using Gemini Vision, PDF text, or RapidOCR."""
+    import gc
+    import tempfile
+
     api_key = gemini_api_key.strip() or os.environ.get("GEMINI_API_KEY", "").strip()
     if image_path.suffix.lower() == ".pdf":
         return _scan_pdf(
@@ -436,7 +461,9 @@ def scan_document(
             threshold=threshold,
         )
     if api_key:
-        doc_type, raw_text, inv = _scan_with_gemini(image_path, api_key)
+        with tempfile.TemporaryDirectory() as tmp:
+            prepped = _prepare_ocr_image(image_path, Path(tmp), max_dim=1600)
+            doc_type, raw_text, inv = _scan_with_gemini(prepped, api_key)
         return ScanResult(
             engine="gemini",
             document_type=doc_type,
@@ -446,7 +473,10 @@ def scan_document(
         )
 
     ocr = _get_rapid_ocr()
-    result, _elapse = ocr(str(image_path))
+    with tempfile.TemporaryDirectory() as tmp:
+        prepped = _prepare_ocr_image(image_path, Path(tmp), max_dim=1600)
+        result, _elapse = ocr(str(prepped))
+    gc.collect()
     raw_text = _group_ocr_boxes_into_lines(result or [])
     inv = parse_invoice_text(raw_text)
     inv, verified = _reconcile_with_cpsat(raw_text, inv)
