@@ -490,3 +490,88 @@ def scan_document(
         cpsat_verified=verified,
     )
 
+
+_THSR_STATIONS = ("南港", "台北", "臺北", "板橋", "桃園", "新竹", "苗栗", "台中", "臺中", "彰化", "雲林", "嘉義", "台南", "臺南", "左營")
+
+
+def parse_travel_receipt(
+    file_path: Path,
+    *,
+    gemini_api_key: str = "",
+    pdf_password: str = "",
+) -> dict[str, Any]:
+    """Extract travel receipt fields (HSR/TRA/Lodging/Bus) from a PDF or image."""
+    import re
+    import tempfile
+
+    raw_text = ""
+    engine = "rapidocr"
+    inv: ParsedInvoice | None = None
+
+    if file_path.suffix.lower() == ".pdf":
+        import pymupdf
+
+        doc = pymupdf.open(str(file_path))
+        try:
+            if doc.needs_pass:
+                unlocked = bool(pdf_password and doc.authenticate(pdf_password)) or bool(doc.authenticate(""))
+                if not unlocked:
+                    raise ValueError("此 PDF 已加密保護，請填入密碼後再掃描。")
+            raw_text = _extract_pdf_lines(doc)
+            if len(raw_text) >= 15 and not gemini_api_key.strip():
+                engine = "pdf-text"
+                inv = parse_invoice_text(raw_text)
+            else:
+                with tempfile.TemporaryDirectory() as tmp:
+                    img_p = Path(tmp) / "p1.png"
+                    doc[0].get_pixmap(dpi=150).save(str(img_p))
+                    return parse_travel_receipt(img_p, gemini_api_key=gemini_api_key)
+        finally:
+            doc.close()
+    else:
+        res = scan_document(file_path, gemini_api_key=gemini_api_key)
+        engine = res.engine
+        raw_text = res.raw_text
+        inv = res.invoice
+
+    compact = raw_text.replace(" ", "").replace("\u3000", "")
+    amount = inv.total_amount if (inv and inv.total_amount) else None
+    if amount is None:
+        m_amt = re.search(r"(?:票價|總計|合計|實付|金額|TWD|NT\$|\$)\s*[:：]?\s*(\d+(?:,\d{3})*)", compact, re.IGNORECASE)
+        if m_amt:
+            amount = int(m_amt.group(1).replace(",", ""))
+
+    # Detect date (YYYY/MM/DD or YYYY-MM-DD or YYY/MM/DD)
+    mm_dd = ""
+    m_dt = re.search(r"(20\d{2}|1[01]\d)[/\-.](\d{1,2})[/\-.](\d{1,2})", raw_text)
+    if m_dt:
+        mm_dd = f"{int(m_dt.group(2)):02d}/{int(m_dt.group(3)):02d}"
+
+    # Detect stations
+    found_stations = [st for st in _THSR_STATIONS if st in compact]
+    route_text = "→".join(found_stations[:2]) if len(found_stations) >= 2 else ""
+
+    if any(k in compact.upper() for k in ("高鐵", "高速鐵路", "THSR", "T-EX")):
+        mode = "flight_hsr"
+        summary = "搭乘高鐵"
+    elif any(k in compact.upper() for k in ("臺鐵", "台鐵", "臺灣鐵路", "台灣鐵路", "自強", "莒光", "區間")):
+        mode = "train"
+        summary = "搭乘台鐵"
+    elif any(k in compact.upper() for k in ("飯店", "旅店", "商旅", "酒店", "民宿", "會館", "HOTEL", "INN", "住宿")):
+        mode = "lodging"
+        summary = f"住宿（{inv.seller_name}）" if (inv and inv.seller_name) else "出差住宿"
+    else:
+        mode = "bus_mrt"
+        summary = inv.seller_name if (inv and inv.seller_name) else "交通費單據"
+
+    return {
+        "engine": engine,
+        "receipt_type": mode,
+        "date": mm_dd,
+        "route_text": route_text,
+        "fare": 0 if mode == "lodging" else (amount or 0),
+        "lodging_actual": (amount or 0) if mode == "lodging" else 0,
+        "summary": summary,
+        "raw_text": raw_text,
+    }
+

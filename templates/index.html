@@ -262,8 +262,8 @@
       <div id="panel-scan" class="tab-panel active">
         <div class="row">
           <div class="col">
-            <label>上傳發票或估價單（圖片 .jpg/.png/.webp 或 電子發票 .pdf）</label>
-            <input type="file" id="scanFile" accept=".jpg,.jpeg,.png,.webp,.bmp,.pdf" />
+            <label>上傳發票或估價單（圖片 .jpg/.png/.webp 或 電子發票 .pdf，可多選批次掃描）</label>
+            <input type="file" id="scanFile" accept=".jpg,.jpeg,.png,.webp,.bmp,.pdf" multiple />
           </div>
           <div style="width:180px;">
             <label>PDF 密碼（若有加密再填）</label>
@@ -478,6 +478,17 @@
         <div class="card-title">
           <span>出差行程與費用明細</span>
           <button type="button" class="secondary" onclick="addTravelDayRow()">＋ 新增一日行程</button>
+        </div>
+        <div style="background:#f0fdf4; border:1px solid #bbf7d0; border-radius:8px; padding:10px 12px; margin-bottom:10px;">
+          <div class="row" style="align-items:center; gap:8px;">
+            <div class="col" style="flex:2; min-width:220px;">
+              <label style="color:#166534;">高鐵／台鐵／住宿單據 OCR 自動帶入（支援 PDF 購票證明或照片）</label>
+              <input type="file" id="travelReceiptFile" accept=".jpg,.jpeg,.png,.webp,.bmp,.pdf" />
+            </div>
+            <div style="padding-top:16px;">
+              <button type="button" class="accent" onclick="scanTravelReceipt()">掃描單據帶入明細</button>
+            </div>
+          </div>
         </div>
         <div style="background:#f8fafc; border:1px solid var(--border); border-radius:8px; padding:12px 14px; margin-bottom:10px;">
           <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px; margin-bottom:8px;">
@@ -779,38 +790,91 @@
     }
 
     async function scanDocumentImage() {
-      const file = document.getElementById("scanFile").files[0];
-      if (!file) return showStatus("請先選擇發票或估價單檔案", false);
-      showStatus("正在掃描分析中，請稍候...");
-      const fd = new FormData();
-      fd.append("file", file);
-      fd.append("pdf_password", document.getElementById("pdfPassword").value.trim());
-      fd.append("gemini_api_key", document.getElementById("geminiKey").value.trim());
-      let data;
-      try {
+      const files = [...(document.getElementById("scanFile").files || [])];
+      if (!files.length) return showStatus("請先選擇發票或估價單檔案", false);
+
+      const pdfPw = document.getElementById("pdfPassword").value.trim();
+      const geminiKey = document.getElementById("geminiKey").value.trim();
+
+      if (files.length === 1) {
+        showStatus("正在掃描分析中，請稍候...");
+        const fd = new FormData();
+        fd.append("file", files[0]);
+        fd.append("pdf_password", pdfPw);
+        fd.append("gemini_api_key", geminiKey);
+        let data;
+        try {
+          const res = await fetch("/api/scan-image", { method: "POST", body: fd });
+          const text = await res.text();
+          try {
+            data = JSON.parse(text);
+          } catch {
+            return showStatus(`伺服器回應異常 (HTTP ${res.status})，可能是免費方案記憶體不足或逾時，請稍後重試或改填 Gemini API Key。`, false);
+          }
+        } catch (err) {
+          return showStatus("連線逾時或中斷：" + err.message, false);
+        }
+        if (!data.ok) return showStatus(data.error, false);
+
+        const inv = data.invoice;
+        document.getElementById("manualSourceType").value = data.document_type === "估價單" ? "明細" : "發票";
+        document.getElementById("manualInvoiceNo").value = inv.invoice_no || "";
+        document.getElementById("manualReceiptCount").value = "1";
+        if (inv.roc_date) document.getElementById("manualDate").value = inv.roc_date;
+        if (!document.getElementById("purpose").value && inv.seller_name) {
+          document.getElementById("purpose").value = inv.seller_name + "採購";
+        }
+        renderScanResult(data, false);
+        return;
+      }
+
+      // Multi-file batch scan -> merge all items into manual table for CP-SAT splitting
+      const allItems = [];
+      let grandSum = 0;
+      let firstDate = "";
+      const invNos = [];
+      for (let i = 0; i < files.length; i++) {
+        showStatus(`正在批次掃描第 ${i + 1} / ${files.length} 份單據（${files[i].name}）...`);
+        const fd = new FormData();
+        fd.append("file", files[i]);
+        fd.append("pdf_password", pdfPw);
+        fd.append("gemini_api_key", geminiKey);
         const res = await fetch("/api/scan-image", { method: "POST", body: fd });
         const text = await res.text();
-        try {
-          data = JSON.parse(text);
-        } catch {
-          return showStatus(`伺服器回應異常 (HTTP ${res.status})，可能是免費方案記憶體不足或逾時，請稍後重試或改填 Gemini API Key。`, false);
+        let data;
+        try { data = JSON.parse(text); } catch {
+          return showStatus(`第 ${i + 1} 份單據回應異常 (HTTP ${res.status})`, false);
         }
-      } catch (err) {
-        return showStatus("連線逾時或中斷：" + err.message, false);
-      }
-      if (!data.ok) return showStatus(data.error, false);
-
-      const inv = data.invoice;
-      // Populate the editable manual table with scanned items so user can verify/edit and generate
-      document.getElementById("manualSourceType").value = data.document_type === "估價單" ? "明細" : "發票";
-      document.getElementById("manualInvoiceNo").value = inv.invoice_no || "";
-      document.getElementById("manualReceiptCount").value = "1";
-      if (inv.roc_date) document.getElementById("manualDate").value = inv.roc_date;
-      if (!document.getElementById("purpose").value && inv.seller_name) {
-        document.getElementById("purpose").value = inv.seller_name + "採購";
+        if (!data.ok) return showStatus(`第 ${i + 1} 份失敗：${data.error}`, false);
+        const inv = data.invoice;
+        if (!firstDate && inv.roc_date) firstDate = inv.roc_date;
+        if (inv.invoice_no) invNos.push(inv.invoice_no);
+        grandSum += Number(inv.total_amount || 0);
+        (inv.items || []).forEach(it => allItems.push(it));
       }
 
-      renderScanResult(data, false);
+      document.getElementById("manualSourceType").value = "發票";
+      document.getElementById("manualInvoiceNo").value = invNos.join(", ");
+      document.getElementById("manualReceiptCount").value = String(files.length);
+      if (firstDate) document.getElementById("manualDate").value = firstDate;
+
+      const mergedData = {
+        ok: true,
+        engine: `batch-${files.length}-files`,
+        cpsat_verified: true,
+        document_type: "發票",
+        recommended_sheet: grandSum < 3000 ? "請購單簡化流程-3000元以下適用" : "請購單-3000元以上一定要用此表",
+        raw_text: "",
+        invoice: {
+          invoice_no: invNos.join(", "),
+          roc_date: firstDate,
+          seller_name: "",
+          total_amount: grandSum,
+          items: allItems,
+        },
+      };
+      renderScanResult(mergedData, false);
+      showStatus(`批次掃描完成！共合併 ${files.length} 份單據、${allItems.length} 筆品項（合計 ${grandSum.toLocaleString()} 元），可啟用 CP-SAT 自動分單或產出表單。`);
     }
 
     function escapeHtml(str) {
@@ -864,7 +928,16 @@
           </details>
         </div>
       `;
+      const greenKw = ["影印紙", "碳粉", "墨水", "電腦", "螢幕", "LED", "燈管", "空調", "冷氣", "飲水機", "印表機", "冰箱"];
+      const matchedGreen = (inv.items || []).filter(it => greenKw.some(k => (it.name || "").includes(k))).map(it => it.name);
+      const greenHint = matchedGreen.length
+        ? `<div style="margin-top:6px; padding:6px 10px; background:#fef3c7; border:1px solid #fde68a; border-radius:6px; font-size:12px; color:#92400e;">🌿 提醒：偵測到疑似「綠色採購指定項目」（${escapeHtml(matchedGreen.slice(0, 3).join("、"))}），送件時請記得確認環保標章欄位。</div>`
+        : "";
+
       showStatus(`完成解析！總金額 ${inv.total_amount ?? 0} 元 → 自動選用「${data.recommended_sheet}」`);
+      if (greenHint) {
+        document.getElementById("scanResultBox").insertAdjacentHTML("beforeend", greenHint);
+      }
     }
 
     async function reparseRawOcrWithCpsat() {
@@ -1779,6 +1852,84 @@
       document.getElementById("travelPreviewArea").innerHTML = `
         <div class="file-list"><a href="/api/download/${encodeURIComponent(data.filename)}">下載 ${data.filename}</a></div>
       `;
+    }
+
+    const TRAVEL_PREFS_KEY = "purchase_app_travel_prefs_v1";
+
+    function saveTravelPrefs() {
+      try {
+        const prefs = {
+          traveler_name: document.getElementById("travelerName").value,
+          job_title: document.getElementById("travelJobTitle").value,
+          rank_level: document.getElementById("travelRankLevel").value,
+          car_rate: document.getElementById("travelCarRate").value,
+          scooter_rate: document.getElementById("travelScooterRate").value,
+          budget_code: document.getElementById("travelBudgetCode").value,
+          plan_name: document.getElementById("travelPlanName").value,
+        };
+        localStorage.setItem(TRAVEL_PREFS_KEY, JSON.stringify(prefs));
+      } catch {}
+    }
+
+    function loadTravelPrefs() {
+      try {
+        const raw = localStorage.getItem(TRAVEL_PREFS_KEY);
+        if (!raw) return;
+        const p = JSON.parse(raw);
+        if (p.traveler_name !== undefined) document.getElementById("travelerName").value = p.traveler_name;
+        if (p.job_title !== undefined) document.getElementById("travelJobTitle").value = p.job_title;
+        if (p.rank_level !== undefined) document.getElementById("travelRankLevel").value = p.rank_level;
+        if (p.car_rate !== undefined) document.getElementById("travelCarRate").value = p.car_rate;
+        if (p.scooter_rate !== undefined) document.getElementById("travelScooterRate").value = p.scooter_rate;
+        if (p.budget_code !== undefined) document.getElementById("travelBudgetCode").value = p.budget_code;
+        if (p.plan_name !== undefined) document.getElementById("travelPlanName").value = p.plan_name;
+      } catch {}
+    }
+
+    ["travelerName", "travelJobTitle", "travelRankLevel", "travelCarRate", "travelScooterRate", "travelBudgetCode", "travelPlanName"].forEach(id => {
+      const el = document.getElementById(id);
+      if (el) {
+        el.addEventListener("input", saveTravelPrefs);
+        el.addEventListener("change", saveTravelPrefs);
+      }
+    });
+    loadTravelPrefs();
+
+    async function scanTravelReceipt() {
+      const file = document.getElementById("travelReceiptFile").files[0];
+      if (!file) return showTravelStatus("請先選擇高鐵／台鐵／住宿單據檔案", false);
+      showTravelStatus("正在掃描辨識出差單據，請稍候...");
+      const fd = new FormData();
+      fd.append("file", file);
+      const geminiEl = document.getElementById("geminiKey");
+      if (geminiEl && geminiEl.value.trim()) fd.append("gemini_api_key", geminiEl.value.trim());
+
+      const res = await fetch("/api/travel/scan-receipt", { method: "POST", body: fd });
+      const text = await res.text();
+      let data;
+      try { data = JSON.parse(text); } catch {
+        return showTravelStatus(`單據掃描失敗 (HTTP ${res.status})`, false);
+      }
+      if (!data.ok) return showTravelStatus(data.error, false);
+
+      const rows = [...document.querySelectorAll("#travelDaysBody tr")];
+      let targetRow = rows.find(r => !r.querySelector(".t-route").value.trim() && !r.querySelector(".t-fare").value.trim() && !(parseFloat(r.querySelector(".t-lodging").value || "0") > 0));
+      if (!targetRow) {
+        addTravelDayRow();
+        targetRow = document.querySelector("#travelDaysBody tr:last-child");
+      }
+      if (data.date) targetRow.querySelector(".t-date").value = data.date;
+      if (data.route_text) targetRow.querySelector(".t-route").value = data.route_text;
+      if (data.summary) targetRow.querySelector(".t-summary").value = data.summary;
+      if (data.receipt_type === "lodging") {
+        targetRow.querySelector(".t-lodging").value = data.lodging_actual || 0;
+      } else {
+        targetRow.querySelector(".t-mode").value = data.receipt_type || "bus_mrt";
+        if (data.fare) targetRow.querySelector(".t-fare").value = data.fare;
+      }
+      targetRow.querySelector(".t-rc").value = "1";
+      showTravelStatus(`已辨識單據（${data.summary}）並帶入行程明細！`);
+      previewTravel();
     }
 
     addTravelDayRow();

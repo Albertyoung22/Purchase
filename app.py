@@ -56,7 +56,7 @@ from history_store import (
 )
 from invoice_parser import parse_einvoice_csv, parse_invoice_text
 from ocr_cpsat_parser import extract_candidates_from_text, reconcile_items_with_cpsat
-from ocr_scanner import _detect_document_type, _recommend_sheet, scan_document
+from ocr_scanner import _detect_document_type, _recommend_sheet, parse_travel_receipt, scan_document
 from print_preview import (
     export_multiple_xlsx_to_merged_pdf,
     export_xlsx_to_pdf,
@@ -882,6 +882,27 @@ def _travel_report_from_payload(payload: dict[str, Any]) -> TravelReport:
         days=days,
         rates=rates,
     )
+
+
+@app.post("/api/travel/scan-receipt")
+def api_travel_scan_receipt():
+    file = request.files.get("file")
+    if not file or not file.filename:
+        return jsonify({"ok": False, "error": "請選擇車票或住宿單據檔案（圖片或 PDF）"}), 400
+    ext = Path(file.filename).suffix.lower()
+    if ext not in (".jpg", ".jpeg", ".png", ".webp", ".bmp", ".pdf"):
+        return jsonify({"ok": False, "error": "僅支援圖片 (.jpg, .png, .webp, .bmp) 或 .pdf 格式"}), 400
+
+    gemini_key = request.form.get("gemini_api_key", "")
+    pdf_password = request.form.get("pdf_password", "")
+    try:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            dest = Path(tmp_dir) / f"travel_receipt{ext}"
+            file.save(dest)
+            parsed = parse_travel_receipt(dest, gemini_api_key=gemini_key, pdf_password=pdf_password)
+        return jsonify({"ok": True, **parsed})
+    except Exception as exc:
+        return jsonify({"ok": False, "error": f"單據掃描失敗：{exc}"}), 400
 
 
 @app.post("/api/travel/calc-route")

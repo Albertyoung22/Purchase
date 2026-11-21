@@ -620,6 +620,30 @@ class TestDesktopApp(unittest.TestCase):
             self.assertTrue(data_ph["ok"])
             self.assertEqual(data_ph["total_km"], 145.0)
 
+    def test_travel_scan_receipt_api(self) -> None:
+        import pymupdf
+
+        doc = pymupdf.open()
+        page = doc.new_page()
+        page.insert_text(
+            (50, 50),
+            "台灣高速鐵路 THSR\n2026/11/21\n台南 -> 台北\n票價 1350\n",
+        )
+        pdf_bytes = doc.tobytes()
+        doc.close()
+
+        res = self.client.post(
+            "/api/travel/scan-receipt",
+            data={"file": (io.BytesIO(pdf_bytes), "hsr_ticket.pdf")},
+            content_type="multipart/form-data",
+        )
+        data = res.get_json()
+        self.assertTrue(data["ok"])
+        self.assertEqual(data["receipt_type"], "flight_hsr")
+        self.assertEqual(data["date"], "11/21")
+        self.assertEqual(data["route_text"], "台南→台北")
+        self.assertEqual(data["fare"], 1350)
+
 
 if __name__ == "__main__":
     unittest.main()
