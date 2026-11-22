@@ -61,6 +61,34 @@ def append_history(
             "item_count": len(req.items),
             "items_summary": item_names,
             "output_file": out_file.name,
+            "request_data": {
+                "request_id": req.request_id,
+                "source_type": req.source_type,
+                "sheet_name": req.sheet_name,
+                "budget_code": req.budget_code,
+                "plan_name": req.plan_name,
+                "level1": req.level1,
+                "level2": req.level2,
+                "level3": req.level3,
+                "department": req.department,
+                "payer_name": req.payer_name,
+                "purpose": req.purpose,
+                "receipt_count": req.receipt_count,
+                "request_date": req.request_date,
+                "items": [
+                    {
+                        "name": it.name,
+                        "spec": it.spec,
+                        "unit": it.unit,
+                        "quantity": it.quantity,
+                        "unit_price": it.unit_price,
+                        "manual_subtotal": it.manual_subtotal,
+                        "invoice_no": it.invoice_no,
+                        "note": it.note,
+                    }
+                    for it in req.items
+                ],
+            },
         })
 
     with _LOCK:

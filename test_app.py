@@ -645,6 +645,43 @@ class TestDesktopApp(unittest.TestCase):
         self.assertEqual(data["route_text"], "台南→台北")
         self.assertEqual(data["fare"], 1350)
 
+    def test_history_redownload_after_temp_file_deleted(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            out_dir = Path(tmp) / "output"
+            hist_path = Path(tmp) / "history.json"
+            with (
+                patch.object(web_app, "_active_template_path", return_value=None),
+                patch.object(web_app, "OUTPUT_DIR", out_dir),
+                patch.object(web_app, "HISTORY_PATH", hist_path),
+            ):
+                res = self.client.post(
+                    "/api/generate",
+                    json={
+                        "mode": "manual",
+                        "budget_code": "321",
+                        "department": "總務處",
+                        "purpose": "重啟後重建下載測試",
+                        "items": [{"name": "測試品項", "unit": "個", "quantity": 2, "unit_price": 150}],
+                    },
+                )
+                data = res.get_json()
+                self.assertTrue(data["ok"])
+                self.assertEqual(len(data["history_entries"]), 1)
+                entry = data["history_entries"][0]
+                self.assertIn("request_data", entry)
+
+                # Simulate Render restart wiping OUTPUT_DIR
+                for f in out_dir.glob("*"):
+                    f.unlink()
+
+                res_dl = self.client.get(f"/api/download/{entry['output_file']}")
+                self.assertEqual(res_dl.status_code, 404)
+
+                res_re = self.client.post("/api/history/redownload", json={"record": entry})
+                self.assertEqual(res_re.status_code, 200)
+                self.assertGreater(len(res_re.data), 1000)
+                res_re.close()
+
 
 if __name__ == "__main__":
     unittest.main()

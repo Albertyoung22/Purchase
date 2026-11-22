@@ -1517,11 +1517,67 @@
           <td>${r.purpose ? `<strong>${escapeHtml(r.purpose)}</strong><br>` : ""}<span style="color:var(--muted); font-size:12px;">${escapeHtml(r.items_summary || "")}</span></td>
           <td style="text-align:right; font-weight:600;">${Number(r.total_amount || 0).toLocaleString()}</td>
           <td style="white-space:nowrap;">
-            ${r.output_file ? `<a href="/api/download/${encodeURIComponent(r.output_file)}" style="font-size:12px; margin-right:6px;">下載</a>` : ""}
+            ${r.output_file ? `<button type="button" class="secondary" onclick="downloadHistoryFile('${escapeHtml(r.id)}', '${escapeHtml(r.output_file)}')" style="padding:3px 8px; font-size:12px; margin-right:6px;">下載</button>` : ""}
             <button class="secondary" onclick="deleteHistoryItem('${escapeHtml(r.id)}')" style="padding:3px 8px; font-size:12px;">刪除</button>
           </td>
         </tr>
       `).join("");
+    }
+
+    async function downloadHistoryFile(id, filename) {
+      const triggerBlobDownload = (blob, dlName) => {
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = dlName;
+        a.click();
+        URL.revokeObjectURL(url);
+      };
+
+      // 1. Try server temp file first
+      try {
+        const res = await fetch("/api/download/" + encodeURIComponent(filename));
+        if (res.ok) {
+          triggerBlobDownload(await res.blob(), filename);
+          return;
+        }
+      } catch {}
+
+      // 2. Try reading from bound local folder if available
+      if (localDirHandle && localDirPermission === "granted") {
+        try {
+          const fh = await localDirHandle.getFileHandle(filename);
+          const file = await fh.getFile();
+          triggerBlobDownload(file, filename);
+          return;
+        } catch {}
+      }
+
+      // 3. Rebuild from saved request_data in history record (survives Render restarts)
+      const records = IS_CLOUD ? getLocalHistory() : ((await (await fetch("/api/history")).json()).records || []);
+      const rec = records.find(r => r.id === id);
+      if (rec && rec.request_data) {
+        const payload = { record: rec };
+        if (IS_CLOUD) {
+          try {
+            const customCfg = localStorage.getItem(CONFIG_STORAGE_KEY);
+            if (customCfg) payload.custom_config = JSON.parse(customCfg);
+          } catch {}
+        }
+        try {
+          const res = await fetch("/api/history/redownload", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload),
+          });
+          if (res.ok) {
+            triggerBlobDownload(await res.blob(), filename);
+            return;
+          }
+        } catch {}
+      }
+
+      alert("找不到伺服器暫存檔（雲端重啟後會清除暫存），且此筆為舊版紀錄缺少明細資料。若您有綁定本機資料夾，請直接到本機資料夾開啟原檔。");
     }
 
     async function deleteHistoryItem(id) {

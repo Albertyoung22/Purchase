@@ -792,6 +792,57 @@ def api_export_history():
     )
 
 
+@app.post("/api/history/redownload")
+def api_history_redownload():
+    """Rebuild a purchase Excel from saved history request_data when Render temp file is gone."""
+    try:
+        payload = request.get_json(force=True)
+        rec = payload.get("record") or {}
+        rd = rec.get("request_data") or {}
+        if not rd or not rd.get("items"):
+            return jsonify({"ok": False, "error": "此筆紀錄缺少明細資料，無法於雲端重啟後自動重建"}), 404
+        cfg = load_config(CONFIG_PATH)
+        if isinstance(payload.get("custom_config"), dict):
+            cfg.update(payload["custom_config"])
+        items = [
+            LineItem(
+                name=str(it.get("name", "")),
+                spec=str(it.get("spec", "")),
+                unit=str(it.get("unit", "")),
+                quantity=parse_number(it.get("quantity")),
+                unit_price=parse_number(it.get("unit_price")),
+                manual_subtotal=parse_number(it.get("manual_subtotal") if it.get("manual_subtotal") is not None else it.get("subtotal")),
+                invoice_no=str(it.get("invoice_no", "")),
+                note=str(it.get("note", "")),
+            )
+            for it in rd.get("items", [])
+        ]
+        req = PurchaseRequest(
+            request_id=str(rd.get("request_id") or rec.get("request_id") or "REQ-001"),
+            source_type=str(rd.get("source_type") or "明細"),
+            sheet_name=str(rd.get("sheet_name") or ""),
+            budget_code=str(rd.get("budget_code") or ""),
+            plan_name=str(rd.get("plan_name") or ""),
+            level1=str(rd.get("level1") or ""),
+            level2=str(rd.get("level2") or ""),
+            level3=str(rd.get("level3") or ""),
+            department=str(rd.get("department") or ""),
+            payer_name=str(rd.get("payer_name") or ""),
+            purpose=str(rd.get("purpose") or ""),
+            receipt_count=int(rd["receipt_count"]) if rd.get("receipt_count") not in (None, "") else None,
+            request_date=str(rd.get("request_date") or ""),
+            items=items,
+        )
+        tpl = _active_template_path()
+        files = generate_from_requests(tpl, [req], OUTPUT_DIR, cfg)
+        if not files or not files[0].exists():
+            return jsonify({"ok": False, "error": "重建 Excel 失敗"}), 500
+        dl_name = str(rec.get("output_file") or files[0].name)
+        return send_file(files[0], as_attachment=True, download_name=dl_name)
+    except Exception as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 400
+
+
 @app.post("/api/open-output")
 def api_open_output():
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
