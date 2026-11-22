@@ -190,6 +190,7 @@
       </button>
       <button class="main-nav-btn" onclick="switchMainView('travel', this)">國內出差旅費</button>
       <button class="main-nav-btn" onclick="switchMainView('substitute', this)">代課勞健保與印領清冊</button>
+      <button id="navBtnProperty" class="main-nav-btn" onclick="switchMainView('property', this)">財產與物品增加單</button>
       <button class="main-nav-btn" onclick="switchMainView('settings', this)">
         範本與系統設定
       </button>
@@ -362,10 +363,11 @@
           <label>單張金額上限 (元)</label>
           <input type="number" id="maxAmount" value="3000" min="1" />
         </div>
-        <div style="display:flex; gap:8px;">
+        <div style="display:flex; gap:8px; flex-wrap:wrap;">
           <button class="secondary" onclick="previewForms()">預覽分單結果</button>
           <button onclick="printPreview()">真實列印預覽 (Excel)</button>
           <button class="accent" onclick="generateExcel()">產出 Excel 請購單</button>
+          <button type="button" class="secondary" onclick="transferPurchaseToProperty()" title="將目前採購明細一鍵帶入財產／非消耗品增加單">📦 轉入財產／非消耗品增加單</button>
         </div>
       </div>
 
@@ -687,6 +689,111 @@
         </div>
       </div>
     </div><!-- /#view-substitute -->
+
+    <!-- Separate Tab View: Property & Non-Consumable Asset Increase Form -->
+    <div id="view-property" class="main-view">
+      <div class="card">
+        <div class="card-title">
+          <span>財產／非消耗品增加單（與採購申請作業連動）</span>
+          <span id="propLiveTotalBadge" class="badge ok">財產：0 筆｜非消耗品：0 筆｜合計：NT$ 0</span>
+        </div>
+        <p style="margin:0 0 12px; font-size:13px; color:var(--muted);">
+          依《臺南市市有財產產籍管理作業要點》：單價滿 <strong>10,000 元</strong> 自動歸類為「財產」（預設年限 5 年），未達 1 萬元歸類為「非消耗品」（預設年限 2 年），亦可手動調整並自動分頁產出增加單／登記清冊。
+        </p>
+        <div class="row">
+          <div class="col" style="flex:2;">
+            <label>學校／機關名稱</label>
+            <input type="text" id="propSchoolName" placeholder="例如：臺南市立○○國民小學" />
+          </div>
+          <div class="col">
+            <label>增加單編號（選填）</label>
+            <input type="text" id="propDocNo" placeholder="例如：PI-1151101" />
+          </div>
+          <div class="col">
+            <label>購置／驗收日期</label>
+            <input type="text" id="propAcquireDate" placeholder="中華民國 115 年 11 月 22 日" />
+          </div>
+          <div class="col">
+            <label>使用／保管單位</label>
+            <input type="text" id="propDepartment" value="總務處" />
+          </div>
+          <div class="col">
+            <label>預算科目代碼（選填）</label>
+            <input type="text" id="propBudgetCode" placeholder="例如：321" />
+          </div>
+          <div class="col">
+            <label>計畫名稱（選填）</label>
+            <input type="text" id="propPlanName" placeholder="例如：充實教學設備" />
+          </div>
+        </div>
+
+        <div style="margin-top:12px; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px;">
+          <strong style="font-size:13px; color:var(--primary);">財產／非消耗品明細</strong>
+          <div style="display:flex; gap:8px; flex-wrap:wrap;">
+            <button type="button" class="secondary" onclick="transferPurchaseToProperty()">↺ 從採購明細匯入</button>
+            <button type="button" class="secondary" onclick="addPropertyRow()">+ 新增一列品項</button>
+          </div>
+        </div>
+
+        <div style="overflow-x:auto; margin-top:8px;">
+          <table id="propertyTable">
+            <thead>
+              <tr>
+                <th style="min-width:130px;">品名</th>
+                <th style="min-width:105px;">規格／型號</th>
+                <th style="width:54px;">單位</th>
+                <th style="width:62px;">數量</th>
+                <th style="width:86px;">單價</th>
+                <th style="min-width:96px;">類別</th>
+                <th style="width:64px;">年限</th>
+                <th style="min-width:105px;">財產/物品編號</th>
+                <th style="min-width:90px;">保管地點</th>
+                <th style="min-width:78px;">保管人</th>
+                <th style="min-width:95px;">發票/備註</th>
+                <th style="width:44px; text-align:center;">操作</th>
+              </tr>
+            </thead>
+            <tbody id="propertyBody"></tbody>
+          </table>
+        </div>
+
+        <div style="margin-top:12px; display:flex; gap:10px; flex-wrap:wrap;">
+          <button type="button" class="secondary" onclick="previewProperty()">試算分類明細</button>
+          <button type="button" onclick="printPreviewProperty()">真實列印預覽 (PDF)</button>
+          <button type="button" class="accent" onclick="generateProperty()">產出財產／非消耗品增加單 (.xlsx)</button>
+        </div>
+        <div id="propertyStatus" class="status-bar"></div>
+        <div id="propertyPreviewArea" style="margin-top:12px;"></div>
+        <div id="propertyPrintArea" style="margin-top:12px; display:none;"></div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">
+          <span>財產／非消耗品增加單產出紀錄與下載區</span>
+          <div style="display:flex; gap:8px; flex-wrap:wrap;">
+            <button type="button" class="secondary" onclick="exportPropertyHistoryCsv()" style="font-size:12px;">匯出清冊彙整 (.csv)</button>
+            <button type="button" class="danger" onclick="clearPropertyHistoryAll()" style="font-size:12px;">清空紀錄</button>
+          </div>
+        </div>
+        <div id="propertyHistorySummary" style="margin-bottom:10px; display:flex; gap:8px; flex-wrap:wrap;"></div>
+        <div style="overflow-x:auto;">
+          <table id="propertyHistoryTable">
+            <thead>
+              <tr>
+                <th>產出時間</th>
+                <th>單號／日期／單位</th>
+                <th>品項摘要</th>
+                <th style="text-align:right;">財產金額</th>
+                <th style="text-align:right;">非消耗品金額</th>
+                <th style="text-align:right;">總金額</th>
+                <th style="min-width:150px;">操作</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
+    </div><!-- /#view-property -->
 
     <!-- Separate Tab View: Template & Settings -->
     <div id="view-settings" class="main-view">
@@ -2663,6 +2770,376 @@
     loadSubPrefs();
     loadSubstituteHistory();
 
+    // === Property & Non-Consumable Asset Increase Form Module ===
+    const PROP_HISTORY_STORAGE_KEY = "purchase_prop_history_v1";
+
+    function showPropertyStatus(msg, isOk = true) {
+      const bar = document.getElementById("propertyStatus");
+      bar.textContent = msg;
+      bar.className = "status-bar " + (isOk ? "ok" : "err");
+    }
+
+    function addPropertyRow(data = {}) {
+      const tbody = document.getElementById("propertyBody");
+      const tr = document.createElement("tr");
+      const priceVal = data.unit_price !== undefined && data.unit_price !== "" ? Number(data.unit_price) : "";
+      const cat = data.category || (priceVal !== "" && priceVal >= 10000 ? "財產" : (priceVal !== "" ? "非消耗品" : ""));
+      const life = data.useful_life || (cat === "財產" ? 5 : (cat === "非消耗品" ? 2 : ""));
+      tr.innerHTML = `
+        <td><input type="text" class="p-name" value="${escapeHtml(data.name || "")}" placeholder="品名" /></td>
+        <td><input type="text" class="p-spec" value="${escapeHtml(data.spec || "")}" placeholder="規格型號" /></td>
+        <td><input type="text" class="p-unit" value="${escapeHtml(data.unit || "台")}" /></td>
+        <td><input type="number" class="p-qty" step="0.5" min="0" value="${escapeHtml(data.quantity ?? 1)}" /></td>
+        <td><input type="number" class="p-price" min="0" value="${escapeHtml(priceVal)}" oninput="onPropPriceChange(this)" placeholder="單價" /></td>
+        <td>
+          <select class="p-cat">
+            <option value="" ${cat === "" ? "selected" : ""}>自動判斷</option>
+            <option value="財產" ${cat === "財產" ? "selected" : ""}>財產(≥1萬)</option>
+            <option value="非消耗品" ${cat === "非消耗品" ? "selected" : ""}>非消耗品(&lt;1萬)</option>
+          </select>
+        </td>
+        <td><input type="number" class="p-life" min="1" value="${escapeHtml(life)}" placeholder="自動" /></td>
+        <td><input type="text" class="p-no" value="${escapeHtml(data.property_no || "")}" placeholder="選填" /></td>
+        <td><input type="text" class="p-loc" value="${escapeHtml(data.location || "")}" placeholder="保管地點" /></td>
+        <td><input type="text" class="p-cust" value="${escapeHtml(data.custodian || "")}" placeholder="保管人" /></td>
+        <td><input type="text" class="p-note" value="${escapeHtml(data.note || data.invoice_no || "")}" placeholder="發票/備註" /></td>
+        <td style="text-align:center;"><button type="button" onclick="this.closest('tr').remove()" style="color:#b91c1c; background:#fef2f2; border:1px solid #fecaca; padding:5px 8px; font-size:12px; white-space:nowrap;">刪</button></td>
+      `;
+      tbody.appendChild(tr);
+    }
+
+    function onPropPriceChange(inp) {
+      const tr = inp.closest("tr");
+      const val = parseFloat(inp.value);
+      if (isNaN(val)) return;
+      const catSel = tr.querySelector(".p-cat");
+      const lifeInp = tr.querySelector(".p-life");
+      if (!catSel.value) {
+        lifeInp.placeholder = val >= 10000 ? "5" : "2";
+      }
+    }
+
+    function transferPurchaseToProperty() {
+      const purchaseRows = [...document.querySelectorAll("#manualTable tbody tr")];
+      const invNo = (document.getElementById("manualInvoiceNo")?.value || "").trim();
+      const dept = (document.getElementById("department")?.value || "").trim() || "總務處";
+      const school = (document.getElementById("schoolName")?.value || "").trim();
+      const acqDate = (document.getElementById("manualDate")?.value || "").trim();
+      const bCode = (document.getElementById("budgetCode")?.value || "").trim();
+      const plan = (document.getElementById("planName")?.value || "").trim();
+
+      if (school) document.getElementById("propSchoolName").value = school;
+      if (dept) document.getElementById("propDepartment").value = dept;
+      if (acqDate) document.getElementById("propAcquireDate").value = acqDate;
+      if (bCode) document.getElementById("propBudgetCode").value = bCode;
+      if (plan) document.getElementById("propPlanName").value = plan;
+
+      const items = [];
+      purchaseRows.forEach(tr => {
+        const name = tr.querySelector(".m-name").value.trim();
+        if (!name || name === "範例品項") return;
+        const qty = parseFloat(tr.querySelector(".m-qty").value) || 1;
+        let price = parseFloat(tr.querySelector(".m-price").value);
+        if (isNaN(price)) {
+          const sub = parseFloat(tr.querySelector(".m-sub").value);
+          price = !isNaN(sub) && qty > 0 ? Math.round(sub / qty) : 0;
+        }
+        items.push({
+          name,
+          spec: tr.querySelector(".m-spec").value.trim(),
+          unit: tr.querySelector(".m-unit").value.trim() || "個",
+          quantity: qty,
+          unit_price: price,
+          location: dept,
+          invoice_no: invNo,
+          note: tr.querySelector(".m-note").value.trim(),
+        });
+      });
+
+      const navBtn = document.getElementById("navBtnProperty");
+      switchMainView("property", navBtn);
+      if (!items.length) {
+        return showPropertyStatus("目前採購明細表只有空白或範例列，請先匯入或填寫品項後再轉入。", false);
+      }
+      document.getElementById("propertyBody").innerHTML = "";
+      items.forEach(it => addPropertyRow(it));
+      showPropertyStatus(`已從採購明細帶入 ${items.length} 筆品項，並自動分類如下：`);
+      previewProperty();
+    }
+
+    function buildPropertyPayload() {
+      const items = [...document.querySelectorAll("#propertyBody tr")].map(tr => ({
+        name: tr.querySelector(".p-name").value.trim(),
+        spec: tr.querySelector(".p-spec").value.trim(),
+        unit: tr.querySelector(".p-unit").value.trim(),
+        quantity: tr.querySelector(".p-qty").value,
+        unit_price: tr.querySelector(".p-price").value,
+        category: tr.querySelector(".p-cat").value,
+        useful_life: tr.querySelector(".p-life").value,
+        property_no: tr.querySelector(".p-no").value.trim(),
+        location: tr.querySelector(".p-loc").value.trim(),
+        custodian: tr.querySelector(".p-cust").value.trim(),
+        note: tr.querySelector(".p-note").value.trim(),
+      }));
+      const fallbackSchool = document.getElementById("schoolName")?.value.trim() || "臺南市立○○國民小學";
+      return {
+        school_name: document.getElementById("propSchoolName").value.trim() || fallbackSchool,
+        doc_no: document.getElementById("propDocNo").value.trim(),
+        acquire_date: document.getElementById("propAcquireDate").value.trim(),
+        department: document.getElementById("propDepartment").value.trim() || "總務處",
+        budget_code: document.getElementById("propBudgetCode").value.trim(),
+        plan_name: document.getElementById("propPlanName").value.trim(),
+        items,
+      };
+    }
+
+    async function previewProperty() {
+      const res = await fetch("/api/property/preview", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(buildPropertyPayload()),
+      });
+      const data = await res.json();
+      if (!data.ok) return showPropertyStatus(data.error, false);
+      const s = data.summary;
+      const badge = document.getElementById("propLiveTotalBadge");
+      if (badge) badge.textContent = `財產：${s.property_count} 筆｜非消耗品：${s.non_consumable_count} 筆｜合計：NT$ ${s.grand_total.toLocaleString()}`;
+      showPropertyStatus(`分類試算完成：財產 ${s.property_count} 筆 (${s.property_amount.toLocaleString()} 元)、非消耗品 ${s.non_consumable_count} 筆 (${s.non_consumable_amount.toLocaleString()} 元)，合計 ${s.grand_total.toLocaleString()} 元（${data.chinese_upper}）`);
+      document.getElementById("propertyPreviewArea").innerHTML = `
+        <table>
+          <thead>
+            <tr><th>類別</th><th>品名</th><th>規格</th><th>數量×單價</th><th>總價</th><th>年限</th><th>保管地點</th><th>保管人</th><th>備註</th></tr>
+          </thead>
+          <tbody>
+            ${data.items.map(i => `<tr>
+              <td><span class="badge ${i.category === '財產' ? 'ok' : ''}">${escapeHtml(i.category)}</span></td>
+              <td>${escapeHtml(i.name)}</td>
+              <td>${escapeHtml(i.spec)}</td>
+              <td>${i.quantity} × ${i.unit_price.toLocaleString()}</td>
+              <td><strong>${i.total_price.toLocaleString()}</strong></td>
+              <td>${i.useful_life} 年</td>
+              <td>${escapeHtml(i.location)}</td>
+              <td>${escapeHtml(i.custodian)}</td>
+              <td style="font-size:12px;">${escapeHtml(i.note)}</td>
+            </tr>`).join("")}
+          </tbody>
+        </table>
+      `;
+    }
+
+    async function printPreviewProperty() {
+      showPropertyStatus("正在產生財產／非消耗品增加單列印預覽...");
+      const res = await fetch("/api/property/print-preview", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(buildPropertyPayload()),
+      });
+      const data = await res.json();
+      if (!data.ok) return showPropertyStatus(data.error, false);
+      const box = document.getElementById("propertyPrintArea");
+      box.style.display = "block";
+      if (data.mode === "excel_pdf") {
+        box.innerHTML = `<iframe src="${data.pdf_url}?t=${Date.now()}" style="width:100%; height:680px; border:1px solid #cbd5e1; border-radius:6px; background:#fff;"></iframe>`;
+        showPropertyStatus("真實 PDF 列印預覽已載入！");
+      } else {
+        box.innerHTML = `<div style="overflow-x:auto; background:#fff; padding:12px;">${data.html}</div>`;
+        showPropertyStatus("雲端表單預覽已產生！");
+      }
+    }
+
+    async function generateProperty() {
+      await ensureLocalFolderPermission();
+      const res = await fetch("/api/property/generate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(buildPropertyPayload()),
+      });
+      const data = await res.json();
+      if (!data.ok) return showPropertyStatus(data.error, false);
+      const s = data.summary;
+      showPropertyStatus(`已產出增加單（財產 ${s.property_count} 筆、非消耗品 ${s.non_consumable_count} 筆，合計 ${s.grand_total.toLocaleString()} 元）：`);
+      document.getElementById("propertyPreviewArea").innerHTML = `
+        <div class="file-list"><a href="/api/download/${encodeURIComponent(data.filename)}">下載 ${escapeHtml(data.filename)}</a></div>
+      `;
+      if (IS_CLOUD && data.history_entry) {
+        appendLocalPropHistory(data.history_entry);
+      }
+      await loadPropertyHistory();
+      if (await autoSaveFilesToLocalFolder([data.filename])) {
+        showPropertyStatus(`已產出增加單（合計 ${s.grand_total.toLocaleString()} 元），並已自動寫入本機資料夾！`);
+      }
+    }
+
+    function getLocalPropHistory() {
+      try {
+        const raw = localStorage.getItem(PROP_HISTORY_STORAGE_KEY);
+        const parsed = raw ? JSON.parse(raw) : [];
+        return Array.isArray(parsed) ? parsed : [];
+      } catch {
+        return [];
+      }
+    }
+
+    function setLocalPropHistory(records) {
+      try {
+        localStorage.setItem(PROP_HISTORY_STORAGE_KEY, JSON.stringify(records));
+        syncLocalFolderWrite();
+      } catch {}
+    }
+
+    function appendLocalPropHistory(entry) {
+      const updated = [entry, ...getLocalPropHistory()];
+      setLocalPropHistory(updated);
+      return updated;
+    }
+
+    function summarizeLocalPropHistory(records) {
+      return {
+        total_count: records.length,
+        total_property_amount: records.reduce((a, r) => a + Number(r.property_amount || 0), 0),
+        total_non_consumable_amount: records.reduce((a, r) => a + Number(r.non_consumable_amount || 0), 0),
+        grand_total: records.reduce((a, r) => a + Number(r.grand_total || 0), 0),
+      };
+    }
+
+    async function loadPropertyHistory() {
+      if (IS_CLOUD) {
+        const records = getLocalPropHistory();
+        renderPropertyHistory(records, summarizeLocalPropHistory(records));
+        return;
+      }
+      const res = await fetch("/api/property/history");
+      const data = await res.json();
+      if (data.ok) renderPropertyHistory(data.records, data.summary);
+    }
+
+    function renderPropertyHistory(records, summary) {
+      const sumBox = document.getElementById("propertyHistorySummary");
+      if (sumBox) {
+        sumBox.innerHTML = `
+          <span class="badge ok">累積增加單：${summary.total_count ?? records.length} 份</span>
+          <span class="badge ok">累積財產：NT$ ${Number(summary.total_property_amount || 0).toLocaleString()}</span>
+          <span class="badge">累積非消耗品：NT$ ${Number(summary.total_non_consumable_amount || 0).toLocaleString()}</span>
+        `;
+      }
+      const tbody = document.querySelector("#propertyHistoryTable tbody");
+      if (!tbody) return;
+      if (!records.length) {
+        tbody.innerHTML = `<tr><td colspan="7" style="text-align:center; color:var(--muted);">尚無財產增加單產出紀錄，產出 Excel 後會自動記錄於此。</td></tr>`;
+        return;
+      }
+      tbody.innerHTML = records.map(r => `
+        <tr>
+          <td style="white-space:nowrap;">${escapeHtml(r.created_at)}</td>
+          <td><strong>${escapeHtml(r.doc_no || r.department || "-")}</strong><br><span style="color:var(--muted); font-size:12px;">${escapeHtml(r.acquire_date || "")}</span></td>
+          <td>${escapeHtml(r.items_summary || "")}</td>
+          <td style="text-align:right;">${Number(r.property_amount || 0).toLocaleString()}</td>
+          <td style="text-align:right;">${Number(r.non_consumable_amount || 0).toLocaleString()}</td>
+          <td style="text-align:right; font-weight:600;">${Number(r.grand_total || 0).toLocaleString()}</td>
+          <td style="white-space:nowrap;">
+            ${r.output_file ? `<button type="button" class="secondary" onclick="downloadPropertyHistoryFile('${escapeHtml(r.id)}', '${escapeHtml(r.output_file)}')" style="padding:3px 8px; font-size:12px; margin-right:4px;">下載</button>` : ""}
+            ${r.payload ? `<button type="button" class="secondary" onclick="loadPropertyHistoryToForm('${escapeHtml(r.id)}')" style="padding:3px 8px; font-size:12px; margin-right:4px;">帶入</button>` : ""}
+            <button type="button" class="secondary" onclick="deletePropertyHistoryItem('${escapeHtml(r.id)}')" style="padding:3px 8px; font-size:12px; color:#b91c1c;">刪除</button>
+          </td>
+        </tr>
+      `).join("");
+    }
+
+    async function downloadPropertyHistoryFile(id, filename) {
+      const triggerDl = (blob, dlName) => {
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = dlName;
+        a.click();
+        URL.revokeObjectURL(url);
+      };
+      try {
+        const res = await fetch("/api/download/" + encodeURIComponent(filename));
+        if (res.ok) return triggerDl(await res.blob(), filename);
+      } catch {}
+      if (localDirHandle && localDirPermission === "granted") {
+        try {
+          const fh = await localDirHandle.getFileHandle(filename);
+          return triggerDl(await fh.getFile(), filename);
+        } catch {}
+      }
+      const records = IS_CLOUD ? getLocalPropHistory() : ((await (await fetch("/api/property/history")).json()).records || []);
+      const rec = records.find(r => r.id === id);
+      if (rec && rec.payload) {
+        try {
+          const res = await fetch("/api/property/history/redownload", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ record: rec }),
+          });
+          if (res.ok) return triggerDl(await res.blob(), filename);
+        } catch {}
+      }
+      alert("找不到伺服器暫存檔，且此筆紀錄無法自動重建。");
+    }
+
+    async function loadPropertyHistoryToForm(id) {
+      const records = IS_CLOUD ? getLocalPropHistory() : ((await (await fetch("/api/property/history")).json()).records || []);
+      const rec = records.find(r => r.id === id);
+      if (!rec || !rec.payload) return;
+      const p = rec.payload;
+      if (p.school_name) document.getElementById("propSchoolName").value = p.school_name;
+      if (p.doc_no !== undefined) document.getElementById("propDocNo").value = p.doc_no;
+      if (p.acquire_date !== undefined) document.getElementById("propAcquireDate").value = p.acquire_date;
+      if (p.department) document.getElementById("propDepartment").value = p.department;
+      if (p.budget_code !== undefined) document.getElementById("propBudgetCode").value = p.budget_code;
+      if (p.plan_name !== undefined) document.getElementById("propPlanName").value = p.plan_name;
+      document.getElementById("propertyBody").innerHTML = "";
+      (p.items || []).forEach(it => addPropertyRow(it));
+      showPropertyStatus("已將歷史增加單明細帶入上方編輯表！");
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    }
+
+    async function deletePropertyHistoryItem(id) {
+      if (IS_CLOUD) {
+        const filtered = getLocalPropHistory().filter(r => r.id !== id);
+        setLocalPropHistory(filtered);
+        renderPropertyHistory(filtered, summarizeLocalPropHistory(filtered));
+        return;
+      }
+      const res = await fetch(`/api/property/history/${encodeURIComponent(id)}`, { method: "DELETE" });
+      const data = await res.json();
+      if (data.ok) renderPropertyHistory(data.records, data.summary);
+    }
+
+    async function clearPropertyHistoryAll() {
+      if (!confirm("確定要清空所有財產增加單紀錄嗎？")) return;
+      if (IS_CLOUD) {
+        setLocalPropHistory([]);
+        renderPropertyHistory([], summarizeLocalPropHistory([]));
+        return;
+      }
+      const res = await fetch("/api/property/history/clear", { method: "POST" });
+      const data = await res.json();
+      if (data.ok) renderPropertyHistory(data.records, data.summary);
+    }
+
+    async function exportPropertyHistoryCsv() {
+      const records = IS_CLOUD ? getLocalPropHistory() : ((await (await fetch("/api/property/history")).json()).records || []);
+      const headers = ["產出時間", "學校", "單號", "購置日期", "單位", "品項摘要", "財產筆數", "財產金額", "非消耗品筆數", "非消耗品金額", "總金額", "檔案名稱"];
+      const rows = records.map(r => [
+        r.created_at || "", r.school_name || "", r.doc_no || "", r.acquire_date || "",
+        r.department || "", r.items_summary || "", r.property_count || 0, r.property_amount || 0,
+        r.non_consumable_count || 0, r.non_consumable_amount || 0, r.grand_total || 0, r.output_file || ""
+      ]);
+      const csv = "\uFEFF" + [headers, ...rows].map(row => row.map(_csvCell).join(",")).join("\r\n");
+      const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(blob);
+      a.download = "財產及非消耗品增加單彙整.csv";
+      a.click();
+      URL.revokeObjectURL(a.href);
+    }
+
+    addPropertyRow({ name: "桌上型電腦", spec: "i5/16G/512G", unit: "台", quantity: 1, unit_price: 22000, location: "教務處" });
+    loadPropertyHistory();
+
     // === Local Folder Sync (File System Access API + IndexedDB) ===
     const FS_DB_NAME = "purchase_local_fs_db_v1";
     const FS_STORE_NAME = "handles";
@@ -2803,8 +3280,13 @@
         localStorage.setItem(SUB_HISTORY_STORAGE_KEY, JSON.stringify(subHistoryObj));
         if (typeof loadSubstituteHistory === "function") await loadSubstituteHistory();
       }
+      const propHistoryObj = await readJsonFromDir(localDirHandle, "property_history.json");
+      if (Array.isArray(propHistoryObj)) {
+        localStorage.setItem(PROP_HISTORY_STORAGE_KEY, JSON.stringify(propHistoryObj));
+        if (typeof loadPropertyHistory === "function") await loadPropertyHistory();
+      }
       await restoreLocalTemplate(true);
-      if (!settingsObj || !historyObj || !subHistoryObj) {
+      if (!settingsObj || !historyObj || !subHistoryObj || !propHistoryObj) {
         await syncLocalFolderWrite();
       }
     }
@@ -2904,6 +3386,7 @@
         });
         await writeJsonToDir(localDirHandle, "purchase_history.json", getLocalHistory());
         await writeJsonToDir(localDirHandle, "substitute_history.json", getLocalSubHistory());
+        await writeJsonToDir(localDirHandle, "property_history.json", getLocalPropHistory());
       } catch (err) {
         const info = document.getElementById("localSyncStatusText");
         if (info) info.textContent = "⚠ 本機資料夾寫入失敗：" + (err?.message || err);

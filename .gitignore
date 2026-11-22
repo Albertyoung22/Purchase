@@ -10,5 +10,6 @@ uploads/
 output/
 history.json
 substitute_history.json
+property_history.json
 .desktop_profile/
 

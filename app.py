@@ -37,6 +37,12 @@ from fill_purchase_forms import (
     split_requests_opt,
 )
 from travel_distance import calculate_route_mileage, optimize_route_with_cpsat, parse_stops_text
+from property_builder import (
+    PropertyIncreaseForm,
+    PropertyItem,
+    build_property_increase_xlsx,
+    summarize_property_form,
+)
 from substitute_builder import (
     DEFAULT_OCC_RATE,
     SUBSTITUTE_SAMPLE_CSV,
@@ -80,6 +86,7 @@ BASE_DIR = Path(__file__).parent.resolve()
 CONFIG_PATH = BASE_DIR / "config.json"
 HISTORY_PATH = BASE_DIR / "history.json"
 SUBSTITUTE_HISTORY_PATH = BASE_DIR / "substitute_history.json"
+PROPERTY_HISTORY_PATH = BASE_DIR / "property_history.json"
 UPLOAD_DIR = BASE_DIR / "uploads"
 OUTPUT_DIR = BASE_DIR / "output"
 
@@ -1393,6 +1400,218 @@ def api_substitute_print_preview():
 
 
 _APP_WINDOW_PROC: subprocess.Popen[Any] | None = None
+
+
+def _load_prop_history() -> list[dict[str, Any]]:
+    if not PROPERTY_HISTORY_PATH.exists():
+        return []
+    try:
+        data = json.loads(PROPERTY_HISTORY_PATH.read_text(encoding="utf-8"))
+        return data if isinstance(data, list) else []
+    except Exception:
+        return []
+
+
+def _save_prop_history(records: list[dict[str, Any]]) -> None:
+    PROPERTY_HISTORY_PATH.parent.mkdir(parents=True, exist_ok=True)
+    PROPERTY_HISTORY_PATH.write_text(json.dumps(records, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def _summarize_prop_history(records: list[dict[str, Any]]) -> dict[str, Any]:
+    return {
+        "total_count": len(records),
+        "total_property_amount": sum(int(r.get("property_amount") or 0) for r in records),
+        "total_non_consumable_amount": sum(int(r.get("non_consumable_amount") or 0) for r in records),
+        "grand_total": sum(int(r.get("grand_total") or 0) for r in records),
+    }
+
+
+def _property_form_from_payload(payload: dict[str, Any]) -> PropertyIncreaseForm:
+    raw_items = payload.get("items") or []
+    items: list[PropertyItem] = []
+    for row in raw_items:
+        name = str(row.get("name") or "").strip()
+        if not name:
+            continue
+        items.append(
+            PropertyItem(
+                name=name,
+                spec=str(row.get("spec") or "").strip(),
+                unit=str(row.get("unit") or "個").strip(),
+                quantity=float(parse_number(row.get("quantity")) or 1),
+                unit_price=int(round(float(parse_number(row.get("unit_price")) or 0))),
+                category=str(row.get("category") or "").strip(),
+                property_no=str(row.get("property_no") or "").strip(),
+                useful_life=int(parse_number(row.get("useful_life")) or 0),
+                location=str(row.get("location") or "").strip(),
+                custodian=str(row.get("custodian") or "").strip(),
+                invoice_no=str(row.get("invoice_no") or "").strip(),
+                note=str(row.get("note") or "").strip(),
+            )
+        )
+    if not items:
+        raise ValueError("請至少輸入一筆財產或非消耗品明細")
+    return PropertyIncreaseForm(
+        school_name=str(payload.get("school_name") or "臺南市立○○國民小學").strip(),
+        doc_no=str(payload.get("doc_no") or "").strip(),
+        acquire_date=str(payload.get("acquire_date") or "").strip(),
+        department=str(payload.get("department") or "總務處").strip(),
+        budget_code=str(payload.get("budget_code") or "").strip(),
+        plan_name=str(payload.get("plan_name") or "").strip(),
+        items=items,
+    )
+
+
+@app.post("/api/property/preview")
+def api_property_preview():
+    try:
+        payload = request.get_json(force=True)
+        form = _property_form_from_payload(payload)
+        computed, summary = summarize_property_form(form)
+        return jsonify({
+            "ok": True,
+            "items": [
+                {
+                    "name": c.name,
+                    "spec": c.spec,
+                    "unit": c.unit,
+                    "quantity": c.quantity,
+                    "unit_price": c.unit_price,
+                    "total_price": c.total_price,
+                    "category": c.category,
+                    "property_no": c.property_no,
+                    "useful_life": c.useful_life,
+                    "location": c.location,
+                    "custodian": c.custodian,
+                    "invoice_no": c.invoice_no,
+                    "note": c.note,
+                }
+                for c in computed
+            ],
+            "summary": summary,
+            "chinese_upper": amount_to_chinese_upper(summary["grand_total"]),
+        })
+    except Exception as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 400
+
+
+@app.post("/api/property/generate")
+def api_property_generate():
+    try:
+        payload = request.get_json(force=True)
+        form = _property_form_from_payload(payload)
+        OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+        stamp = datetime.now(timezone(timedelta(hours=8))).strftime("%Y%m%d_%H%M%S")
+        safe_dept = sanitize_filename(form.department or "總務處")
+        out_path = OUTPUT_DIR / f"{stamp}_{safe_dept}_財產及非消耗品增加單.xlsx"
+        build_property_increase_xlsx(form, out_path)
+        computed, summary = summarize_property_form(form)
+        names = [c.name for c in computed]
+        summary_names = "、".join(names[:3]) + (f" 等共{len(names)}項" if len(names) > 3 else "")
+        history_entry = {
+            "id": uuid.uuid4().hex[:10],
+            "created_at": datetime.now(timezone(timedelta(hours=8))).strftime("%Y-%m-%d %H:%M:%S"),
+            "school_name": form.school_name,
+            "doc_no": form.doc_no,
+            "acquire_date": form.acquire_date,
+            "department": form.department,
+            "items_summary": summary_names,
+            "property_count": summary["property_count"],
+            "property_amount": summary["property_amount"],
+            "non_consumable_count": summary["non_consumable_count"],
+            "non_consumable_amount": summary["non_consumable_amount"],
+            "grand_total": summary["grand_total"],
+            "output_file": out_path.name,
+            "payload": payload,
+        }
+        if not (os.environ.get("RENDER") or os.environ.get("PORT")):
+            records = [history_entry] + _load_prop_history()
+            _save_prop_history(records)
+        return jsonify({
+            "ok": True,
+            "filename": out_path.name,
+            "summary": summary,
+            "chinese_upper": amount_to_chinese_upper(summary["grand_total"]),
+            "history_entry": history_entry,
+        })
+    except Exception as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 400
+
+
+@app.post("/api/property/print-preview")
+def api_property_print_preview():
+    try:
+        payload = request.get_json(force=True)
+        form = _property_form_from_payload(payload)
+        preview_root = OUTPUT_DIR / "_preview"
+        _cleanup_old_previews(preview_root)
+        preview_id = uuid.uuid4().hex[:12]
+        preview_dir = preview_root / preview_id
+        preview_dir.mkdir(parents=True, exist_ok=True)
+        xlsx_path = preview_dir / "財產及非消耗品增加單.xlsx"
+        build_property_increase_xlsx(form, xlsx_path)
+        pdf_path = preview_dir / "財產及非消耗品增加單.pdf"
+
+        if export_xlsx_to_pdf(xlsx_path, pdf_path):
+            pngs = render_pdf_to_pngs(pdf_path, preview_dir, prefix=xlsx_path.stem)
+            return jsonify({
+                "ok": True,
+                "mode": "excel_pdf",
+                "pdf_url": f"/api/preview-file/{preview_id}/{pdf_path.name}",
+                "page_urls": [f"/api/preview-file/{preview_id}/{p.name}" for p in pngs],
+                "total_forms": 1,
+            })
+
+        return jsonify({
+            "ok": True,
+            "mode": "html_fallback",
+            "html": render_xlsx_fallback_html(xlsx_path),
+            "total_forms": 1,
+        })
+    except Exception as exc:
+        return jsonify({"ok": False, "error": f"列印預覽失敗：{exc}"}), 400
+
+
+@app.get("/api/property/history")
+def api_property_history():
+    records = _load_prop_history()
+    return jsonify({"ok": True, "records": records, "summary": _summarize_prop_history(records)})
+
+
+@app.delete("/api/property/history/<record_id>")
+def api_property_history_delete(record_id: str):
+    records = _load_prop_history()
+    filtered = [r for r in records if r.get("id") != record_id]
+    if len(filtered) == len(records):
+        return jsonify({"ok": False, "error": "找不到該筆財產增加單紀錄"}), 404
+    _save_prop_history(filtered)
+    return jsonify({"ok": True, "records": filtered, "summary": _summarize_prop_history(filtered)})
+
+
+@app.post("/api/property/history/clear")
+def api_property_history_clear():
+    _save_prop_history([])
+    return jsonify({"ok": True, "records": [], "summary": _summarize_prop_history([])})
+
+
+@app.post("/api/property/history/redownload")
+def api_property_history_redownload():
+    try:
+        body = request.get_json(force=True)
+        rec = body.get("record") or {}
+        payload = rec.get("payload") or {}
+        if not payload or not payload.get("items"):
+            return jsonify({"ok": False, "error": "此筆紀錄缺少明細資料，無法重建增加單"}), 404
+        form = _property_form_from_payload(payload)
+        OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+        dl_name = str(rec.get("output_file") or "財產及非消耗品增加單.xlsx")
+        out_path = OUTPUT_DIR / sanitize_filename(dl_name.removesuffix(".xlsx"))
+        if not str(out_path).endswith(".xlsx"):
+            out_path = Path(f"{out_path}.xlsx")
+        build_property_increase_xlsx(form, out_path)
+        return send_file(out_path, as_attachment=True, download_name=dl_name)
+    except Exception as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 400
 
 
 @app.post("/api/shutdown")
