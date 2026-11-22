@@ -636,6 +636,33 @@
         <div id="substitutePreviewArea" style="margin-top:12px;"></div>
         <div id="substitutePrintArea" style="margin-top:12px; display:none;"></div>
       </div>
+
+      <div class="card">
+        <div class="card-title">
+          <span>代課鐘點費印領清冊產出紀錄與下載區</span>
+          <div style="display:flex; gap:8px; flex-wrap:wrap;">
+            <button type="button" class="secondary" onclick="exportSubstituteHistoryCsv()" style="font-size:12px;">匯出清冊彙整 (.csv)</button>
+            <button type="button" class="danger" onclick="clearSubstituteHistoryAll()" style="font-size:12px;">清空紀錄</button>
+          </div>
+        </div>
+        <div id="substituteHistorySummary" style="margin-bottom:10px; display:flex; gap:8px; flex-wrap:wrap;"></div>
+        <div style="overflow-x:auto;">
+          <table id="substituteHistoryTable">
+            <thead>
+              <tr>
+                <th>產出時間</th>
+                <th>年月／案別</th>
+                <th>教師名單摘要</th>
+                <th style="text-align:right;">應領總額</th>
+                <th style="text-align:right;">實領總額</th>
+                <th style="text-align:right;">機關負擔</th>
+                <th style="min-width:150px;">操作</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
     </div><!-- /#view-substitute -->
 
     <!-- Separate Tab View: Template & Settings -->
@@ -2350,12 +2377,185 @@
       document.getElementById("substitutePreviewArea").innerHTML = `
         <div class="file-list"><a href="/api/download/${encodeURIComponent(data.filename)}">下載 ${escapeHtml(data.filename)}</a></div>
       `;
+      if (IS_CLOUD && data.history_entry) {
+        appendLocalSubHistory(data.history_entry);
+      }
+      await loadSubstituteHistory();
       if (await autoSaveFilesToLocalFolder([data.filename])) {
         showSubstituteStatus(`已產出清冊（實領 ${t.net_pay.toLocaleString()} 元、機關負擔 ${t.employer_total.toLocaleString()} 元），並已自動寫入本機資料夾！`);
       }
     }
 
+    const SUB_HISTORY_STORAGE_KEY = "purchase_sub_history_v1";
+
+    function getLocalSubHistory() {
+      try {
+        const raw = localStorage.getItem(SUB_HISTORY_STORAGE_KEY);
+        const parsed = raw ? JSON.parse(raw) : [];
+        return Array.isArray(parsed) ? parsed : [];
+      } catch {
+        return [];
+      }
+    }
+
+    function setLocalSubHistory(records) {
+      try {
+        localStorage.setItem(SUB_HISTORY_STORAGE_KEY, JSON.stringify(records));
+        syncLocalFolderWrite();
+      } catch {}
+    }
+
+    function appendLocalSubHistory(entry) {
+      const updated = [entry, ...getLocalSubHistory()];
+      setLocalSubHistory(updated);
+      return updated;
+    }
+
+    function summarizeLocalSubHistory(records) {
+      return {
+        total_count: records.length,
+        total_gross: records.reduce((a, r) => a + Number(r.gross_pay || 0), 0),
+        total_net: records.reduce((a, r) => a + Number(r.net_pay || 0), 0),
+        total_employer: records.reduce((a, r) => a + Number(r.employer_total || 0), 0),
+      };
+    }
+
+    async function loadSubstituteHistory() {
+      if (IS_CLOUD) {
+        const records = getLocalSubHistory();
+        renderSubstituteHistory(records, summarizeLocalSubHistory(records));
+        return;
+      }
+      const res = await fetch("/api/substitute/history");
+      const data = await res.json();
+      if (data.ok) renderSubstituteHistory(data.records, data.summary);
+    }
+
+    function renderSubstituteHistory(records, summary) {
+      const sumBox = document.getElementById("substituteHistorySummary");
+      if (sumBox) {
+        sumBox.innerHTML = `
+          <span class="badge ok">累積清冊：${summary.total_count ?? records.length} 份</span>
+          <span class="badge ok">累積實領合計：NT$ ${Number(summary.total_net || 0).toLocaleString()}</span>
+          <span class="badge">累積機關負擔：NT$ ${Number(summary.total_employer || 0).toLocaleString()}</span>
+        `;
+      }
+      const tbody = document.querySelector("#substituteHistoryTable tbody");
+      if (!tbody) return;
+      if (!records.length) {
+        tbody.innerHTML = `<tr><td colspan="7" style="text-align:center; color:var(--muted);">尚無代課清冊產出紀錄，產出 Excel 後會自動記錄於此。</td></tr>`;
+        return;
+      }
+      tbody.innerHTML = records.map(r => `
+        <tr>
+          <td style="white-space:nowrap;">${escapeHtml(r.created_at)}</td>
+          <td><strong>${escapeHtml(r.roc_year)}年${escapeHtml(r.month)}月</strong><br><span style="color:var(--muted); font-size:12px;">${escapeHtml(r.plan_name || "")}</span></td>
+          <td>${escapeHtml(r.teachers_summary || "")} <span class="badge">${r.teacher_count || 0}人</span></td>
+          <td style="text-align:right;">${Number(r.gross_pay || 0).toLocaleString()}</td>
+          <td style="text-align:right; font-weight:600;">${Number(r.net_pay || 0).toLocaleString()}</td>
+          <td style="text-align:right;">${Number(r.employer_total || 0).toLocaleString()}</td>
+          <td style="white-space:nowrap;">
+            ${r.output_file ? `<button type="button" class="secondary" onclick="downloadSubstituteHistoryFile('${escapeHtml(r.id)}', '${escapeHtml(r.output_file)}')" style="padding:3px 8px; font-size:12px; margin-right:4px;">下載</button>` : ""}
+            ${r.payload ? `<button type="button" class="secondary" onclick="loadSubstituteHistoryToForm('${escapeHtml(r.id)}')" style="padding:3px 8px; font-size:12px; margin-right:4px;">帶入</button>` : ""}
+            <button type="button" class="secondary" onclick="deleteSubstituteHistoryItem('${escapeHtml(r.id)}')" style="padding:3px 8px; font-size:12px; color:#b91c1c;">刪除</button>
+          </td>
+        </tr>
+      `).join("");
+    }
+
+    async function downloadSubstituteHistoryFile(id, filename) {
+      const triggerDl = (blob, dlName) => {
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = dlName;
+        a.click();
+        URL.revokeObjectURL(url);
+      };
+      try {
+        const res = await fetch("/api/download/" + encodeURIComponent(filename));
+        if (res.ok) return triggerDl(await res.blob(), filename);
+      } catch {}
+      if (localDirHandle && localDirPermission === "granted") {
+        try {
+          const fh = await localDirHandle.getFileHandle(filename);
+          return triggerDl(await fh.getFile(), filename);
+        } catch {}
+      }
+      const records = IS_CLOUD ? getLocalSubHistory() : ((await (await fetch("/api/substitute/history")).json()).records || []);
+      const rec = records.find(r => r.id === id);
+      if (rec && rec.payload) {
+        try {
+          const res = await fetch("/api/substitute/history/redownload", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ record: rec }),
+          });
+          if (res.ok) return triggerDl(await res.blob(), filename);
+        } catch {}
+      }
+      alert("找不到伺服器暫存檔，且此筆紀錄無法自動重建。");
+    }
+
+    async function loadSubstituteHistoryToForm(id) {
+      const records = IS_CLOUD ? getLocalSubHistory() : ((await (await fetch("/api/substitute/history")).json()).records || []);
+      const rec = records.find(r => r.id === id);
+      if (!rec || !rec.payload) return;
+      const p = rec.payload;
+      if (p.school_name) document.getElementById("subSchoolName").value = p.school_name;
+      if (p.roc_year) document.getElementById("subRocYear").value = p.roc_year;
+      if (p.month) document.getElementById("subMonth").value = p.month;
+      if (p.plan_name !== undefined) document.getElementById("subPlanName").value = p.plan_name;
+      if (p.budget_code !== undefined) document.getElementById("subBudgetCode").value = p.budget_code;
+      document.getElementById("substituteBody").innerHTML = "";
+      (p.entries || []).forEach(e => addSubstituteRow(e));
+      showSubstituteStatus("已將歷史清冊明細帶入上方編輯表！");
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    }
+
+    async function deleteSubstituteHistoryItem(id) {
+      if (IS_CLOUD) {
+        const filtered = getLocalSubHistory().filter(r => r.id !== id);
+        setLocalSubHistory(filtered);
+        renderSubstituteHistory(filtered, summarizeLocalSubHistory(filtered));
+        return;
+      }
+      const res = await fetch(`/api/substitute/history/${encodeURIComponent(id)}`, { method: "DELETE" });
+      const data = await res.json();
+      if (data.ok) renderSubstituteHistory(data.records, data.summary);
+    }
+
+    async function clearSubstituteHistoryAll() {
+      if (!confirm("確定要清空所有代課鐘點費清冊紀錄嗎？")) return;
+      if (IS_CLOUD) {
+        setLocalSubHistory([]);
+        renderSubstituteHistory([], summarizeLocalSubHistory([]));
+        return;
+      }
+      const res = await fetch("/api/substitute/history/clear", { method: "POST" });
+      const data = await res.json();
+      if (data.ok) renderSubstituteHistory(data.records, data.summary);
+    }
+
+    async function exportSubstituteHistoryCsv() {
+      const records = IS_CLOUD ? getLocalSubHistory() : ((await (await fetch("/api/substitute/history")).json()).records || []);
+      const headers = ["產出時間", "學校", "民國年", "月", "案別", "預算科目", "人數", "教師摘要", "應領總額", "實領總額", "機關負擔", "檔案名稱"];
+      const rows = records.map(r => [
+        r.created_at || "", r.school_name || "", r.roc_year || "", r.month || "",
+        r.plan_name || "", r.budget_code || "", r.teacher_count || 0, r.teachers_summary || "",
+        r.gross_pay || 0, r.net_pay || 0, r.employer_total || 0, r.output_file || ""
+      ]);
+      const csv = "\uFEFF" + [headers, ...rows].map(row => row.map(_csvCell).join(",")).join("\r\n");
+      const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(blob);
+      a.download = "代課鐘點費印領清冊彙整.csv";
+      a.click();
+      URL.revokeObjectURL(a.href);
+    }
+
     addSubstituteRow({ teacher_name: "王小明", subject_note: "五年甲班國語代課", school_level: "elementary", periods: 16, enroll_mode: "part_time", insured_days: 30 });
+    loadSubstituteHistory();
 
     // === Local Folder Sync (File System Access API + IndexedDB) ===
     const FS_DB_NAME = "purchase_local_fs_db_v1";
@@ -2464,7 +2664,12 @@
         localStorage.setItem(HISTORY_STORAGE_KEY, JSON.stringify(historyObj));
         if (typeof loadHistory === "function") await loadHistory();
       }
-      if (!settingsObj || !historyObj) {
+      const subHistoryObj = await readJsonFromDir(localDirHandle, "substitute_history.json");
+      if (Array.isArray(subHistoryObj)) {
+        localStorage.setItem(SUB_HISTORY_STORAGE_KEY, JSON.stringify(subHistoryObj));
+        if (typeof loadSubstituteHistory === "function") await loadSubstituteHistory();
+      }
+      if (!settingsObj || !historyObj || !subHistoryObj) {
         await syncLocalFolderWrite();
       }
     }
@@ -2493,6 +2698,7 @@
           custom_config: customCfg,
         });
         await writeJsonToDir(localDirHandle, "purchase_history.json", getLocalHistory());
+        await writeJsonToDir(localDirHandle, "substitute_history.json", getLocalSubHistory());
       } catch (err) {
         const info = document.getElementById("localSyncStatusText");
         if (info) info.textContent = "⚠ 本機資料夾寫入失敗：" + (err?.message || err);

@@ -120,6 +120,21 @@ class TestSubstituteBuilder(unittest.TestCase):
         d_pp = res_pp.get_json()
         self.assertTrue(d_pp["ok"])
 
+        # History record & redownload after server temp file removal
+        entry = d_gen["history_entry"]
+        self.assertEqual(entry["gross_pay"], 6480)
+        res_hist = client.get("/api/substitute/history")
+        self.assertEqual(res_hist.status_code, 200)
+        self.assertGreaterEqual(len(res_hist.get_json()["records"]), 1)
+
+        res_re = client.post("/api/substitute/history/redownload", json={"record": entry})
+        self.assertEqual(res_re.status_code, 200)
+        self.assertGreater(len(res_re.data), 1000)
+        res_re.close()
+
+        res_del = client.delete(f"/api/substitute/history/{entry['id']}")
+        self.assertEqual(res_del.status_code, 200)
+
 
 if __name__ == "__main__":
     unittest.main()

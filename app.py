@@ -74,6 +74,7 @@ from print_preview import (
 BASE_DIR = Path(__file__).parent.resolve()
 CONFIG_PATH = BASE_DIR / "config.json"
 HISTORY_PATH = BASE_DIR / "history.json"
+SUBSTITUTE_HISTORY_PATH = BASE_DIR / "substitute_history.json"
 UPLOAD_DIR = BASE_DIR / "uploads"
 OUTPUT_DIR = BASE_DIR / "output"
 
@@ -1170,6 +1171,30 @@ def api_substitute_preview():
         return jsonify({"ok": False, "error": str(exc)}), 400
 
 
+def _load_sub_history() -> list[dict[str, Any]]:
+    if not SUBSTITUTE_HISTORY_PATH.exists():
+        return []
+    try:
+        data = json.loads(SUBSTITUTE_HISTORY_PATH.read_text(encoding="utf-8"))
+        return data if isinstance(data, list) else []
+    except Exception:
+        return []
+
+
+def _save_sub_history(records: list[dict[str, Any]]) -> None:
+    SUBSTITUTE_HISTORY_PATH.parent.mkdir(parents=True, exist_ok=True)
+    SUBSTITUTE_HISTORY_PATH.write_text(json.dumps(records, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def _summarize_sub_history(records: list[dict[str, Any]]) -> dict[str, Any]:
+    return {
+        "total_count": len(records),
+        "total_gross": sum(int(r.get("gross_pay") or 0) for r in records),
+        "total_net": sum(int(r.get("net_pay") or 0) for r in records),
+        "total_employer": sum(int(r.get("employer_total") or 0) for r in records),
+    }
+
+
 @app.post("/api/substitute/generate")
 def api_substitute_generate():
     try:
@@ -1181,12 +1206,75 @@ def api_substitute_generate():
         out_path = OUTPUT_DIR / f"{safe_plan}_{stamp}.xlsx"
         build_substitute_roster_xlsx(roster, out_path)
         _, totals = summarize_roster(roster)
+        names = [e.teacher_name for e in roster.entries]
+        summary_names = "、".join(names[:3]) + (f" 等共{len(names)}人" if len(names) > 3 else "")
+        history_entry = {
+            "id": uuid.uuid4().hex[:10],
+            "created_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+            "school_name": roster.school_name,
+            "roc_year": roster.roc_year,
+            "month": roster.month,
+            "plan_name": roster.plan_name,
+            "budget_code": roster.budget_code,
+            "teacher_count": len(names),
+            "teachers_summary": summary_names,
+            "gross_pay": totals["gross_pay"],
+            "net_pay": totals["net_pay"],
+            "employer_total": totals["employer_total"],
+            "output_file": out_path.name,
+            "payload": payload,
+        }
+        records = [history_entry] + _load_sub_history()
+        _save_sub_history(records)
         return jsonify({
             "ok": True,
             "filename": out_path.name,
             "totals": totals,
             "chinese_upper_net": amount_to_chinese_upper(totals["net_pay"]),
+            "history_entry": history_entry,
         })
+    except Exception as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 400
+
+
+@app.get("/api/substitute/history")
+def api_substitute_history():
+    records = _load_sub_history()
+    return jsonify({"ok": True, "records": records, "summary": _summarize_sub_history(records)})
+
+
+@app.delete("/api/substitute/history/<record_id>")
+def api_substitute_history_delete(record_id: str):
+    records = _load_sub_history()
+    filtered = [r for r in records if r.get("id") != record_id]
+    if len(filtered) == len(records):
+        return jsonify({"ok": False, "error": "找不到該筆代課清冊紀錄"}), 404
+    _save_sub_history(filtered)
+    return jsonify({"ok": True, "records": filtered, "summary": _summarize_sub_history(filtered)})
+
+
+@app.post("/api/substitute/history/clear")
+def api_substitute_history_clear():
+    _save_sub_history([])
+    return jsonify({"ok": True, "records": [], "summary": _summarize_sub_history([])})
+
+
+@app.post("/api/substitute/history/redownload")
+def api_substitute_history_redownload():
+    try:
+        body = request.get_json(force=True)
+        rec = body.get("record") or {}
+        payload = rec.get("payload") or {}
+        if not payload or not payload.get("entries"):
+            return jsonify({"ok": False, "error": "此筆紀錄缺少明細資料，無法重建清冊"}), 404
+        roster = _substitute_roster_from_payload(payload)
+        OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+        dl_name = str(rec.get("output_file") or f"{roster.roc_year}年{roster.month}月_代課鐘點費印領清冊.xlsx")
+        out_path = OUTPUT_DIR / sanitize_filename(dl_name.removesuffix(".xlsx"))
+        if not str(out_path).endswith(".xlsx"):
+            out_path = Path(f"{out_path}.xlsx")
+        build_substitute_roster_xlsx(roster, out_path)
+        return send_file(out_path, as_attachment=True, download_name=dl_name)
     except Exception as exc:
         return jsonify({"ok": False, "error": str(exc)}), 400
 
