@@ -38,9 +38,12 @@ from fill_purchase_forms import (
 from travel_distance import calculate_route_mileage, optimize_route_with_cpsat, parse_stops_text
 from substitute_builder import (
     DEFAULT_OCC_RATE,
+    SUBSTITUTE_SAMPLE_CSV,
     SubstituteEntry,
     SubstituteRoster,
     build_substitute_roster_xlsx,
+    parse_substitute_csv_or_xlsx,
+    parse_substitute_text_smart,
     summarize_roster,
 )
 from travel_form_builder import (
@@ -1282,6 +1285,76 @@ def api_substitute_history_redownload():
         return send_file(out_path, as_attachment=True, download_name=dl_name)
     except Exception as exc:
         return jsonify({"ok": False, "error": str(exc)}), 400
+
+
+@app.get("/api/substitute/sample-csv")
+def api_substitute_sample_csv():
+    return send_file(
+        io.BytesIO(("\ufeff" + SUBSTITUTE_SAMPLE_CSV).encode("utf-8")),
+        as_attachment=True,
+        download_name="代課教師批次匯入範例.csv",
+        mimetype="text/csv; charset=utf-8",
+    )
+
+
+@app.post("/api/substitute/import")
+def api_substitute_import():
+    """Import substitute teacher roster from CSV/XLSX, image/PDF OCR, Gemini Vision, or pasted text."""
+    try:
+        if request.content_type and "application/json" in request.content_type:
+            body = request.get_json(force=True)
+            entries = parse_substitute_text_smart(str(body.get("raw_text") or ""))
+            if not entries:
+                return jsonify({"ok": False, "error": "無法從貼上文字中辨識出代課教師明細"}), 400
+            return jsonify({"ok": True, "entries": entries, "engine": "smart_text"})
+
+        file = request.files.get("file")
+        if not file or not file.filename:
+            return jsonify({"ok": False, "error": "請選擇要匯入的檔案（.xlsx / .csv / .pdf / 圖片）"}), 400
+        raw_bytes = file.read()
+        ext = Path(file.filename).suffix.lower()
+        if ext in {".csv", ".xlsx", ".xlsm"}:
+            entries = parse_substitute_csv_or_xlsx(raw_bytes, file.filename)
+            if not entries:
+                return jsonify({"ok": False, "error": "檔案中未偵測到有效的教師明細列"}), 400
+            return jsonify({"ok": True, "entries": entries, "engine": ext.lstrip(".")})
+
+        # Image / PDF OCR or Gemini Vision
+        gemini_key = (request.form.get("gemini_api_key") or "").strip()
+        pdf_pw = (request.form.get("pdf_password") or "").strip()
+        if gemini_key:
+            try:
+                from ocr_scanner import _call_gemini_json
+                prompt = (
+                    "請辨識這份學校代課教師名冊或鐘點費表單，回傳純 JSON 陣列（不要 markdown），"
+                    "每個元素包含：teacher_name(姓名), subject_note(代課科目或班級), school_level(elementary/junior/senior/custom), "
+                    "hourly_rate(數字或空字串), periods(節數數字), enroll_mode(part_time/full_month/supp_only), insured_days(天數1-30)。"
+                )
+                mime = "application/pdf" if ext == ".pdf" else ("image/png" if ext == ".png" else "image/jpeg")
+                parsed = _call_gemini_json(raw_bytes, mime, gemini_key, prompt)
+                if isinstance(parsed, list) and parsed:
+                    return jsonify({"ok": True, "entries": parsed, "engine": "gemini_vision"})
+            except Exception:
+                pass
+
+        # Fallback to PyMuPDF / RapidOCR text extraction + smart parser
+        extracted_text = ""
+        if ext == ".pdf":
+            import fitz
+            doc = fitz.open(stream=raw_bytes, filetype="pdf")
+            if doc.is_encrypted and pdf_pw:
+                doc.authenticate(pdf_pw)
+            extracted_text = "\n".join(page.get_text("text") for page in doc)
+            doc.close()
+        if not extracted_text.strip():
+            from ocr_scanner import extract_text_with_rapidocr
+            extracted_text = extract_text_with_rapidocr(raw_bytes)
+        entries = parse_substitute_text_smart(extracted_text)
+        if not entries:
+            return jsonify({"ok": False, "error": "已讀取檔案文字但無法解析教師明細，建議改用 CSV/Excel 匯入或填入 Gemini API Key。"}), 400
+        return jsonify({"ok": True, "entries": entries, "engine": "ocr_smart"})
+    except Exception as exc:
+        return jsonify({"ok": False, "error": f"匯入失敗：{exc}"}), 400
 
 
 @app.post("/api/substitute/print-preview")

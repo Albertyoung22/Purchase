@@ -135,6 +135,57 @@ class TestSubstituteBuilder(unittest.TestCase):
         res_del = client.delete(f"/api/substitute/history/{entry['id']}")
         self.assertEqual(res_del.status_code, 200)
 
+    def test_substitute_import_csv_xlsx_and_smart_text(self):
+        client = app.test_client()
+        # 1. Sample CSV download
+        res_sample = client.get("/api/substitute/sample-csv")
+        self.assertEqual(res_sample.status_code, 200)
+        csv_bytes = res_sample.data
+        res_sample.close()
+
+        # 2. Import CSV
+        import io as _io
+        res_csv = client.post(
+            "/api/substitute/import",
+            data={"file": (_io.BytesIO(csv_bytes), "roster.csv")},
+            content_type="multipart/form-data",
+        )
+        self.assertEqual(res_csv.status_code, 200)
+        d_csv = res_csv.get_json()
+        self.assertTrue(d_csv["ok"])
+        self.assertEqual(len(d_csv["entries"]), 3)
+        self.assertEqual(d_csv["entries"][0]["teacher_name"], "王小明")
+        self.assertEqual(d_csv["entries"][1]["enroll_mode"], "full_month")
+        self.assertEqual(d_csv["entries"][2]["enroll_mode"], "supp_only")
+
+        # 3. Import XLSX
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.append(["教師姓名", "代課科目", "學制", "節數", "投保模式", "投保天數"])
+        ws.append(["周老師", "體育", "高中", 12, "部分工時", 20])
+        buf = _io.BytesIO()
+        wb.save(buf)
+        res_xlsx = client.post(
+            "/api/substitute/import",
+            data={"file": (_io.BytesIO(buf.getvalue()), "roster.xlsx")},
+            content_type="multipart/form-data",
+        )
+        self.assertEqual(res_xlsx.status_code, 200)
+        d_xlsx = res_xlsx.get_json()
+        self.assertEqual(d_xlsx["entries"][0]["school_level"], "senior")
+        self.assertEqual(d_xlsx["entries"][0]["insured_days"], 20)
+
+        # 4. Smart paste text
+        res_txt = client.post(
+            "/api/substitute/import",
+            json={"raw_text": "1. 吳老師 國中 18節 英文科 全月 15天\n2. 鄭老師 國小 8節 美勞"},
+        )
+        self.assertEqual(res_txt.status_code, 200)
+        d_txt = res_txt.get_json()
+        self.assertEqual(len(d_txt["entries"]), 2)
+        self.assertEqual(d_txt["entries"][0]["periods"], 18.0)
+        self.assertEqual(d_txt["entries"][0]["insured_days"], 15)
+
 
 if __name__ == "__main__":
     unittest.main()

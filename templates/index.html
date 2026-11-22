@@ -597,6 +597,28 @@
           </div>
         </div>
 
+        <div style="margin-top:12px; padding:10px 12px; background:#f8fafc; border:1px solid var(--border); border-radius:8px;">
+          <div style="display:flex; gap:10px; flex-wrap:wrap; align-items:flex-end;">
+            <div class="col" style="flex:2; min-width:220px;">
+              <label>批次匯入／智慧辨識（支援教務處 .xlsx / .csv、或掃描 .pdf / 圖片）</label>
+              <input type="file" id="subImportFile" accept=".xlsx,.xlsm,.csv,.pdf,.jpg,.jpeg,.png,.webp,.bmp" />
+            </div>
+            <div>
+              <button type="button" class="accent" onclick="importSubstituteFile()">匯入／智慧辨識帶入</button>
+            </div>
+            <div>
+              <a href="/api/substitute/sample-csv" style="font-size:12px;">下載範例 CSV</a>
+            </div>
+          </div>
+          <details style="margin-top:8px;">
+            <summary style="font-size:12px; color:var(--primary); cursor:pointer;">📋 或直接貼上 Excel / LINE 代課名單文字（智慧解析）</summary>
+            <div style="margin-top:8px;">
+              <textarea id="subPasteText" style="min-height:80px;" placeholder="例如：&#10;王小明 國小 16節 五年甲班國語 部分工時 30天&#10;李美華 國中 40節 七年乙班數學 全月加保 30天"></textarea>
+              <button type="button" class="secondary" onclick="importSubstitutePasteText()" style="margin-top:6px;">解析文字 → 帶入下方教師表</button>
+            </div>
+          </details>
+        </div>
+
         <div style="margin-top:12px; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px;">
           <strong style="font-size:13px; color:var(--primary);">代課教師與投保明細</strong>
           <div style="display:flex; gap:8px;">
@@ -2263,6 +2285,49 @@
       const tr = sel.closest("tr");
       const rateInp = tr.querySelector(".s-rate");
       if (sel.value !== "custom") rateInp.value = "";
+    }
+
+    function applyImportedSubstituteEntries(entries, engineLabel) {
+      document.getElementById("substituteBody").innerHTML = "";
+      entries.forEach(e => addSubstituteRow(e));
+      showSubstituteStatus(`已成功匯入 ${entries.length} 位代課教師（引擎：${engineLabel}），並自動試算如下：`);
+      previewSubstitute();
+    }
+
+    async function importSubstituteFile() {
+      const file = document.getElementById("subImportFile").files[0];
+      if (!file) return showSubstituteStatus("請先選擇 .xlsx、.csv、.pdf 或圖片檔案", false);
+      showSubstituteStatus("正在匯入／智慧辨識代課名單，請稍候...");
+      const fd = new FormData();
+      fd.append("file", file);
+      fd.append("gemini_api_key", (document.getElementById("geminiKey")?.value || "").trim());
+      fd.append("pdf_password", (document.getElementById("pdfPassword")?.value || "").trim());
+      try {
+        const res = await fetch("/api/substitute/import", { method: "POST", body: fd });
+        const data = await res.json();
+        if (!data.ok) return showSubstituteStatus(data.error, false);
+        applyImportedSubstituteEntries(data.entries, data.engine || "import");
+      } catch (err) {
+        showSubstituteStatus("匯入失敗：" + err.message, false);
+      }
+    }
+
+    async function importSubstitutePasteText() {
+      const rawText = document.getElementById("subPasteText").value;
+      if (!rawText.trim()) return showSubstituteStatus("請先貼上代課教師名單文字", false);
+      showSubstituteStatus("正在智慧解析貼上文字...");
+      try {
+        const res = await fetch("/api/substitute/import", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ raw_text: rawText }),
+        });
+        const data = await res.json();
+        if (!data.ok) return showSubstituteStatus(data.error, false);
+        applyImportedSubstituteEntries(data.entries, data.engine || "smart_text");
+      } catch (err) {
+        showSubstituteStatus("文字解析失敗：" + err.message, false);
+      }
     }
 
     function buildSubstitutePayload() {

@@ -11,11 +11,14 @@ Implements Tainan City / Taiwan public school regulations for:
 
 from __future__ import annotations
 
+import csv
+import io
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Iterable
+from typing import Any, Iterable
 
-from openpyxl import Workbook
+from openpyxl import Workbook, load_workbook
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 
@@ -449,3 +452,236 @@ def build_substitute_roster_xlsx(roster: SubstituteRoster, output_path: Path) ->
 
     wb.save(output_path)
     return output_path
+
+
+_SUB_HEADER_ALIASES: dict[str, tuple[str, ...]] = {
+    "teacher_name": ("教師姓名", "姓名", "代課教師", "老師姓名", "name", "teacher_name"),
+    "id_number": ("身分證", "身分證字號", "id", "id_number"),
+    "subject_note": ("代課科目", "科目", "說明", "班級科目", "授課科目", "subject_note"),
+    "school_level": ("學制", "教育階段", "階段", "school_level"),
+    "hourly_rate": ("單價", "鐘點費", "鐘點單價", "時薪", "hourly_rate"),
+    "periods": ("節數", "授課節數", "時數", "總節數", "periods"),
+    "enroll_mode": ("投保模式", "投保別", "加保別", "加保方式", "enroll_mode"),
+    "insured_days": ("天數", "投保天數", "加保天數", "insured_days"),
+    "dependents": ("眷口", "眷口數", "dependents"),
+    "voluntary_pension_pct": ("自提", "勞退自提", "自提%", "voluntary_pension_pct"),
+    "nhi_end_of_month": ("月底健保", "健保", "nhi_end_of_month"),
+    "income_tax": ("所得稅", "代扣所得稅", "income_tax"),
+    "note": ("備註", "note"),
+}
+
+
+def _norm_level(val: str, rate: int = 0) -> str:
+    v = val.strip().lower()
+    if "國中" in v or v == "junior":
+        return "junior"
+    if "高中" in v or "高職" in v or v == "senior":
+        return "senior"
+    if "國小" in v or v == "elementary":
+        return "elementary"
+    if rate == 455:
+        return "junior"
+    if rate == 505:
+        return "senior"
+    if rate > 0 and rate != 405:
+        return "custom"
+    return "elementary"
+
+
+def _norm_enroll_mode(val: str) -> str:
+    v = val.strip().lower()
+    if "全月" in v or "長期" in v or v == "full_month":
+        return "full_month"
+    if "二代" in v or "外聘" in v or "免投保" in v or v == "supp_only":
+        return "supp_only"
+    return "part_time"
+
+
+def _to_float(val: Any, default: float = 0.0) -> float:
+    if val is None or val == "":
+        return default
+    m = re.search(r"-?\d+(?:\.\d+)?", str(val).replace(",", ""))
+    return float(m.group(0)) if m else default
+
+
+def _map_sub_row(row_dict: dict[str, Any]) -> dict[str, Any] | None:
+    name = str(row_dict.get("teacher_name") or "").strip()
+    if not name or name in {"合計", "總計", "序號"}:
+        return None
+    rate = int(round(_to_float(row_dict.get("hourly_rate"), 0)))
+    lvl = _norm_level(str(row_dict.get("school_level") or ""), rate=rate)
+    if lvl != "custom" and rate in (0, 405, 455, 505):
+        rate_out = "" if rate in (0, SCHOOL_LEVEL_RATES.get(lvl)) else rate
+    else:
+        rate_out = rate if rate > 0 else ""
+    eom_raw = str(row_dict.get("nhi_end_of_month") or "").strip().lower()
+    eom = eom_raw not in {"0", "false", "no", "否", "無", "n"}
+    return {
+        "teacher_name": name,
+        "id_number": str(row_dict.get("id_number") or "").strip(),
+        "subject_note": str(row_dict.get("subject_note") or "").strip(),
+        "school_level": lvl,
+        "hourly_rate": rate_out,
+        "periods": _to_float(row_dict.get("periods"), 1),
+        "enroll_mode": _norm_enroll_mode(str(row_dict.get("enroll_mode") or "")),
+        "insured_days": int(round(_to_float(row_dict.get("insured_days"), 30))),
+        "dependents": int(round(_to_float(row_dict.get("dependents"), 0))),
+        "voluntary_pension_pct": _to_float(row_dict.get("voluntary_pension_pct"), 0),
+        "nhi_end_of_month": eom,
+        "income_tax": int(round(_to_float(row_dict.get("income_tax"), 0))),
+        "note": str(row_dict.get("note") or "").strip(),
+    }
+
+
+def _match_header_col(cell_text: str) -> str | None:
+    txt = re.sub(r"\s+", "", str(cell_text or "")).lower()
+    if not txt:
+        return None
+    for field_name, aliases in _SUB_HEADER_ALIASES.items():
+        if any(a.lower() in txt for a in aliases):
+            return field_name
+    return None
+
+
+def parse_substitute_csv_or_xlsx(file_bytes: bytes, filename: str) -> list[dict[str, Any]]:
+    """Parse substitute teacher roster from .xlsx or .csv with flexible Chinese headers."""
+    ext = Path(filename).suffix.lower()
+    rows: list[list[Any]] = []
+    if ext in {".xlsx", ".xlsm"}:
+        wb = load_workbook(io.BytesIO(file_bytes), data_only=True)
+        ws = wb.active
+        for r in ws.iter_rows(values_only=True):
+            if any(c is not None and str(c).strip() for c in r):
+                rows.append(list(r))
+    else:
+        text = None
+        for enc in ("utf-8-sig", "utf-8", "cp950", "big5"):
+            try:
+                text = file_bytes.decode(enc)
+                break
+            except UnicodeDecodeError:
+                continue
+        if text is None:
+            text = file_bytes.decode("utf-8", errors="ignore")
+        reader = csv.reader(io.StringIO(text))
+        for r in reader:
+            if any(str(c).strip() for c in r):
+                rows.append(r)
+
+    if not rows:
+        return []
+
+    # Locate header row within first 10 rows
+    header_idx = 0
+    col_map: dict[int, str] = {}
+    for r_idx, r in enumerate(rows[:10]):
+        candidate: dict[int, str] = {}
+        for c_idx, val in enumerate(r):
+            matched = _match_header_col(str(val or ""))
+            if matched and matched not in candidate.values():
+                candidate[c_idx] = matched
+        if "teacher_name" in candidate.values():
+            header_idx = r_idx
+            col_map = candidate
+            break
+
+    if not col_map:
+        # Fallback positional order: name, subject, level, periods, mode, days
+        col_map = {0: "teacher_name", 1: "subject_note", 2: "school_level", 3: "periods", 4: "enroll_mode", 5: "insured_days"}
+        data_rows = rows
+    else:
+        data_rows = rows[header_idx + 1:]
+
+    entries: list[dict[str, Any]] = []
+    for r in data_rows:
+        raw_dict: dict[str, Any] = {}
+        for c_idx, field_name in col_map.items():
+            if c_idx < len(r):
+                raw_dict[field_name] = r[c_idx]
+        mapped = _map_sub_row(raw_dict)
+        if mapped:
+            entries.append(mapped)
+    return entries
+
+
+def parse_substitute_text_smart(raw_text: str) -> list[dict[str, Any]]:
+    """Smart parser for pasted Excel/LINE text or OCR/PDF lines of substitute teachers."""
+    lines = [ln.strip() for ln in (raw_text or "").splitlines() if ln.strip()]
+    if not lines:
+        return []
+
+    # Check if Tab/comma separated with header
+    if any("\t" in ln or "," in ln for ln in lines[:3]):
+        sep = "\t" if any("\t" in ln for ln in lines[:3]) else ","
+        buf = io.StringIO()
+        writer = csv.writer(buf)
+        for ln in lines:
+            writer.writerow([p.strip() for p in ln.split(sep)])
+        parsed = parse_substitute_csv_or_xlsx(buf.getvalue().encode("utf-8"), "paste.csv")
+        if parsed:
+            return parsed
+
+    entries: list[dict[str, Any]] = []
+    for ln in lines:
+        if any(skip in ln for skip in ("教師姓名", "序號", "合計", "總計")):
+            continue
+        # Extract explicit patterns: e.g. "1. 王小明 國小 16節 五年甲班國語 部分工時 30天"
+        cleaned = re.sub(r"^\d+[\.、\)\s]+", "", ln).strip()
+        if not cleaned:
+            continue
+
+        lvl = _norm_level(cleaned)
+        mode = _norm_enroll_mode(cleaned)
+        days_m = re.search(r"(\d{1,2})\s*[天日]", cleaned)
+        days = int(days_m.group(1)) if days_m else 30
+        per_m = re.search(r"(\d+(?:\.\d+)?)\s*(?:節|堂|小時|hr)", cleaned, re.IGNORECASE)
+        rate_m = re.search(r"(\d{3,4})\s*元", cleaned)
+
+        tokens = re.split(r"[\s,，、/]+", cleaned)
+        name = ""
+        subject_parts: list[str] = []
+        periods = float(per_m.group(1)) if per_m else 0.0
+        rate = int(rate_m.group(1)) if rate_m else 0
+
+        for tok in tokens:
+            if not tok:
+                continue
+            if not name and re.fullmatch(r"[\u4e00-\u9fffA-Za-z]{2,5}", tok) and not any(
+                k in tok for k in ("國小", "國中", "高中", "全月", "部分工時", "二代健保")
+            ):
+                name = tok
+                continue
+            if periods == 0.0 and re.fullmatch(r"\d+(?:\.\d+)?", tok):
+                num = float(tok)
+                if num <= 200:
+                    periods = num
+                    continue
+            if any(k in tok for k in ("國小", "國中", "高中", "高職", "全月", "部分工時", "二代健保")) or re.fullmatch(r"\d+(?:\.\d+)?[節堂天日元]", tok):
+                continue
+            subject_parts.append(tok)
+
+        if name:
+            entries.append({
+                "teacher_name": name,
+                "id_number": "",
+                "subject_note": " ".join(subject_parts),
+                "school_level": lvl,
+                "hourly_rate": rate if (lvl == "custom" and rate > 0) else "",
+                "periods": periods if periods > 0 else 1,
+                "enroll_mode": mode,
+                "insured_days": max(1, min(30, days)),
+                "dependents": 0,
+                "voluntary_pension_pct": 0,
+                "nhi_end_of_month": True,
+                "income_tax": 0,
+                "note": "",
+            })
+    return entries
+
+
+SUBSTITUTE_SAMPLE_CSV = (
+    "教師姓名,身分證字號,代課科目,學制,單價,節數,投保模式,投保天數,眷口數,勞退自提,所得稅,備註\n"
+    "王小明,A123456789,五年甲班國語,國小,405,16,部分工時,30,0,0,0,\n"
+    "李美華,B234567890,七年乙班數學,國中,455,40,全月加保,30,1,6,0,\n"
+    "陳大文,,社團外聘講師,自訂單價,600,10,僅二代健保,0,0,0,0,\n"
+)
