@@ -291,6 +291,15 @@ def build_substitute_roster_xlsx(roster: SubstituteRoster, output_path: Path) ->
     ws1.title = "鐘點費印領清冊"
     ws1.page_setup.orientation = ws1.ORIENTATION_LANDSCAPE
     ws1.page_setup.paperSize = ws1.PAPERSIZE_A4
+    ws1.sheet_properties.pageSetUpPr.fitToPage = True
+    ws1.page_setup.fitToWidth = 1
+    ws1.page_setup.fitToHeight = 0
+    ws1.page_margins.left = 0.25
+    ws1.page_margins.right = 0.25
+    ws1.page_margins.top = 0.4
+    ws1.page_margins.bottom = 0.4
+    ws1.page_margins.header = 0.2
+    ws1.page_margins.footer = 0.2
 
     ws1.merge_cells("A1:O1")
     ws1["A1"] = f"{roster.school_name} {roster.roc_year}年{roster.month}月 代課教師鐘點費印領清冊"
@@ -389,6 +398,15 @@ def build_substitute_roster_xlsx(roster: SubstituteRoster, output_path: Path) ->
     ws2 = wb.create_sheet("勞健保勞退機關負擔明細")
     ws2.page_setup.orientation = ws2.ORIENTATION_LANDSCAPE
     ws2.page_setup.paperSize = ws2.PAPERSIZE_A4
+    ws2.sheet_properties.pageSetUpPr.fitToPage = True
+    ws2.page_setup.fitToWidth = 1
+    ws2.page_setup.fitToHeight = 0
+    ws2.page_margins.left = 0.25
+    ws2.page_margins.right = 0.25
+    ws2.page_margins.top = 0.4
+    ws2.page_margins.bottom = 0.4
+    ws2.page_margins.header = 0.2
+    ws2.page_margins.footer = 0.2
 
     ws2.merge_cells("A1:M1")
     ws2["A1"] = f"{roster.school_name} {roster.roc_year}年{roster.month}月 代課教師勞健保及勞退機關負擔明細表"
