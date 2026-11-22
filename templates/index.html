@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>學校採購申請單自動化系統</title>
+  <title>學校採購申請單自動化系統｜出差旅費・代課勞健保</title>
   <link rel="icon" type="image/svg+xml" href="/static/favicon.svg" />
   <link rel="icon" type="image/png" href="/static/favicon.png" />
   <style>
@@ -169,8 +169,8 @@
 <body>
   <header>
     <div>
-      <h1 id="appTitle">學校採購申請單自動化系統｜國內出差旅費</h1>
-      <div class="sub">支援電子發票／估價單 OCR 掃描、CP-SAT 最佳化分單、國內出差旅費報支與順路里程計算（設定存於本機瀏覽器）</div>
+      <h1 id="appTitle">學校採購申請單自動化系統｜出差旅費・代課勞健保</h1>
+      <div class="sub">支援發票／估價單 OCR 與 CP-SAT 最佳化分單、臺南市出差旅費報支、代課勞健保印領清冊（設定、範本與紀錄皆獨立保存於您的本機電腦）</div>
     </div>
     <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
       <button id="localSyncBtn" class="secondary" onclick="connectLocalFolder()" style="font-size:12px;">📁 綁定本機資料夾</button>
@@ -726,7 +726,7 @@
 
     function updateSchoolTitle() {
       const name = (document.getElementById("schoolName")?.value || "").trim();
-      const title = name ? `${name}｜採購申請單自動化系統・國內出差旅費` : "學校採購申請單自動化系統｜國內出差旅費";
+      const title = name ? `${name}｜採購申請單自動化系統・出差旅費・代課勞健保` : "學校採購申請單自動化系統｜出差旅費・代課勞健保";
       const h1 = document.getElementById("appTitle");
       if (h1) h1.textContent = title;
       document.title = title;
