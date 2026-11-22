@@ -182,6 +182,7 @@
   </header>
 
   <div class="container">
+    <div id="localModeBanner" style="display:none; margin-bottom:12px; padding:10px 14px; border-radius:8px; font-size:13px; border:1px solid #bfdbfe; background:#eff6ff; color:#1e40af; cursor:pointer;" onclick="if(localDirHandle && localDirPermission !== 'granted') connectLocalFolder();"></div>
     <div class="main-nav">
       <button class="main-nav-btn active" onclick="switchMainView('work', this)">採購申請作業</button>
       <button class="main-nav-btn" onclick="switchMainView('travel', this)">國內出差旅費</button>
@@ -1201,7 +1202,8 @@
         badgeSettings.className = "badge ok";
       }
       await loadBudgetOptions();
-      showStatus("範本上傳成功：" + data.filename);
+      await saveLocalTemplateFile(file);
+      showStatus("範本上傳成功並已保存於本機：" + data.filename);
     }
 
     async function inspectTemplate() {
@@ -2555,6 +2557,40 @@
     }
 
     addSubstituteRow({ teacher_name: "王小明", subject_note: "五年甲班國語代課", school_level: "elementary", periods: 16, enroll_mode: "part_time", insured_days: 30 });
+    const SUB_PREFS_KEY = "purchase_sub_prefs_v1";
+    function saveSubPrefs() {
+      try {
+        const prefs = {
+          school_name: document.getElementById("subSchoolName").value,
+          roc_year: document.getElementById("subRocYear").value,
+          plan_name: document.getElementById("subPlanName").value,
+          budget_code: document.getElementById("subBudgetCode").value,
+          occ_rate: document.getElementById("subOccRate").value,
+        };
+        localStorage.setItem(SUB_PREFS_KEY, JSON.stringify(prefs));
+        syncLocalFolderWrite();
+      } catch {}
+    }
+    function loadSubPrefs() {
+      try {
+        const raw = localStorage.getItem(SUB_PREFS_KEY);
+        if (!raw) return;
+        const p = JSON.parse(raw);
+        if (p.school_name !== undefined) document.getElementById("subSchoolName").value = p.school_name;
+        if (p.roc_year !== undefined) document.getElementById("subRocYear").value = p.roc_year;
+        if (p.plan_name !== undefined) document.getElementById("subPlanName").value = p.plan_name;
+        if (p.budget_code !== undefined) document.getElementById("subBudgetCode").value = p.budget_code;
+        if (p.occ_rate !== undefined) document.getElementById("subOccRate").value = p.occ_rate;
+      } catch {}
+    }
+    ["subSchoolName", "subRocYear", "subPlanName", "subBudgetCode", "subOccRate"].forEach(id => {
+      const el = document.getElementById(id);
+      if (el) {
+        el.addEventListener("input", saveSubPrefs);
+        el.addEventListener("change", saveSubPrefs);
+      }
+    });
+    loadSubPrefs();
     loadSubstituteHistory();
 
     // === Local Folder Sync (File System Access API + IndexedDB) ===
@@ -2606,9 +2642,14 @@
     function updateLocalSyncUI() {
       const btn = document.getElementById("localSyncBtn");
       const info = document.getElementById("localSyncStatusText");
+      const banner = document.getElementById("localModeBanner");
       if (!window.showDirectoryPicker) {
         if (btn) btn.style.display = "none";
         if (info) info.textContent = "目前瀏覽器不支援直接存取本機資料夾（建議使用 Chrome 或 Edge），系統已自動改存於瀏覽器本機空間。";
+        if (banner && IS_CLOUD) {
+          banner.style.display = "block";
+          banner.textContent = "💻 多校共用雲端模式：所有設定、紀錄與範本僅存於這台電腦的瀏覽器中，不與他校共用。";
+        }
         return;
       }
       if (!localDirHandle) {
@@ -2617,18 +2658,39 @@
           btn.title = "綁定後可自動讀寫本機設定檔、紀錄檔與產出的 Excel";
         }
         if (info) info.textContent = "尚未綁定本機資料夾（目前暫存於瀏覽器 localStorage）。綁定後每次開啟可一鍵從本機讀取並自動寫回檔案。";
+        if (banner && IS_CLOUD) {
+          banner.style.display = "block";
+          banner.style.background = "#eff6ff";
+          banner.style.borderColor = "#bfdbfe";
+          banner.style.color = "#1e40af";
+          banner.textContent = "💻 多校共用雲端模式：所有設定、學校範本與紀錄皆獨立保存於這台電腦（不與他校共用）。建議點右上角「📁 綁定本機資料夾」直接存成實體檔案！";
+        }
       } else if (localDirPermission === "granted") {
         if (btn) {
           btn.textContent = `📁 本機已同步：${localDirHandle.name}`;
           btn.title = "設定、紀錄與產出的 Excel 會自動寫入此本機資料夾";
         }
-        if (info) info.textContent = `✅ 已連結本機資料夾「${localDirHandle.name}」：自動讀寫 purchase_settings.json、purchase_history.json 及產出的 .xlsx。`;
+        if (info) info.textContent = `✅ 已連結本機資料夾「${localDirHandle.name}」：自動讀寫 purchase_settings.json、purchase_history.json、substitute_history.json、school_template.xlsx 及產出的 .xlsx。`;
+        if (banner && IS_CLOUD) {
+          banner.style.display = "block";
+          banner.style.background = "#ecfdf5";
+          banner.style.borderColor = "#a7f3d0";
+          banner.style.color = "#065f46";
+          banner.textContent = `✅ 本機同步中（資料夾：${localDirHandle.name}）：所有設定、學校範本、採購與代課紀錄、產出 Excel 皆直接讀寫於這台電腦！`;
+        }
       } else {
         if (btn) {
           btn.textContent = `📁 點此載入本機「${localDirHandle.name}」`;
           btn.title = "瀏覽器重新開啟後需點一下授權即可讀取本機資料夾";
         }
         if (info) info.textContent = `🔒 已記住本機資料夾「${localDirHandle.name}」，請點上方「綁定／讀取本機資料夾」授權後載入本機檔案。`;
+        if (banner && IS_CLOUD) {
+          banner.style.display = "block";
+          banner.style.background = "#fef3c7";
+          banner.style.borderColor = "#fcd34d";
+          banner.style.color = "#92400e";
+          banner.textContent = `📁 偵測到此電腦已綁定本機資料夾「${localDirHandle.name}」，點此處一鍵載入本機設定、學校範本與歷史紀錄！`;
+        }
       }
     }
 
@@ -2655,9 +2717,11 @@
       if (settingsObj) {
         if (settingsObj.prefs) localStorage.setItem(PREFS_STORAGE_KEY, JSON.stringify(settingsObj.prefs));
         if (settingsObj.travel_prefs) localStorage.setItem(TRAVEL_PREFS_KEY, JSON.stringify(settingsObj.travel_prefs));
+        if (settingsObj.sub_prefs) localStorage.setItem(SUB_PREFS_KEY, JSON.stringify(settingsObj.sub_prefs));
         if (settingsObj.custom_config) localStorage.setItem(CONFIG_STORAGE_KEY, JSON.stringify(settingsObj.custom_config, null, 2));
         loadUserPrefs();
         if (typeof loadTravelPrefs === "function") loadTravelPrefs();
+        if (typeof loadSubPrefs === "function") loadSubPrefs();
       }
       const historyObj = await readJsonFromDir(localDirHandle, "purchase_history.json");
       if (Array.isArray(historyObj)) {
@@ -2669,9 +2733,77 @@
         localStorage.setItem(SUB_HISTORY_STORAGE_KEY, JSON.stringify(subHistoryObj));
         if (typeof loadSubstituteHistory === "function") await loadSubstituteHistory();
       }
+      await restoreLocalTemplate(true);
       if (!settingsObj || !historyObj || !subHistoryObj) {
         await syncLocalFolderWrite();
       }
+    }
+
+    async function saveLocalTemplateFile(file) {
+      if (!file) return;
+      try {
+        const buf = await file.arrayBuffer();
+        const db = await openFsDb();
+        await new Promise((resolve) => {
+          const tx = db.transaction(FS_STORE_NAME, "readwrite");
+          tx.objectStore(FS_STORE_NAME).put({ name: file.name, buffer: buf }, "local_template_blob");
+          tx.oncomplete = () => resolve();
+          tx.onerror = () => resolve();
+        });
+        if (localDirHandle && localDirPermission === "granted") {
+          const fh = await localDirHandle.getFileHandle("school_template.xlsx", { create: true });
+          const w = await fh.createWritable();
+          await w.write(buf);
+          await w.close();
+          await writeJsonToDir(localDirHandle, "school_template_meta.json", { name: file.name });
+        }
+      } catch {}
+    }
+
+    async function restoreLocalTemplate(preferDir = false) {
+      try {
+        let tplBlob = null;
+        let tplName = "school_template.xlsx";
+        if (preferDir && localDirHandle && localDirPermission === "granted") {
+          try {
+            const fh = await localDirHandle.getFileHandle("school_template.xlsx");
+            tplBlob = await fh.getFile();
+            const meta = await readJsonFromDir(localDirHandle, "school_template_meta.json");
+            if (meta && meta.name) tplName = meta.name;
+          } catch {}
+        }
+        if (!tplBlob) {
+          const db = await openFsDb();
+          const saved = await new Promise((resolve) => {
+            const tx = db.transaction(FS_STORE_NAME, "readonly");
+            const req = tx.objectStore(FS_STORE_NAME).get("local_template_blob");
+            req.onsuccess = () => resolve(req.result || null);
+            req.onerror = () => resolve(null);
+          });
+          if (saved && saved.buffer) {
+            tplBlob = new Blob([saved.buffer], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+            tplName = saved.name || tplName;
+          }
+        }
+        if (!tplBlob) return;
+        const fd = new FormData();
+        fd.append("file", tplBlob, tplName);
+        const res = await fetch("/api/upload-template", { method: "POST", body: fd });
+        const data = await res.json();
+        if (data.ok) {
+          const badge = document.getElementById("tplStatus");
+          if (badge) {
+            badge.textContent = "使用本機範本：" + data.filename;
+            badge.className = "badge ok";
+          }
+          const badgeSettings = document.getElementById("tplStatusSettings");
+          if (badgeSettings) {
+            badgeSettings.textContent = "使用本機範本：" + data.filename;
+            badgeSettings.className = "badge ok";
+          }
+          await loadBudgetOptions();
+        }
+      } catch {}
     }
 
     async function syncLocalFolderWrite() {
@@ -2685,9 +2817,11 @@
         }
         let prefs = {};
         let travelPrefs = {};
+        let subPrefs = {};
         let customCfg = null;
         try { prefs = JSON.parse(localStorage.getItem(PREFS_STORAGE_KEY) || "{}"); } catch {}
         try { travelPrefs = JSON.parse(localStorage.getItem(TRAVEL_PREFS_KEY) || "{}"); } catch {}
+        try { subPrefs = JSON.parse(localStorage.getItem(SUB_PREFS_KEY) || "{}"); } catch {}
         try {
           const rawCfg = localStorage.getItem(CONFIG_STORAGE_KEY);
           if (rawCfg) customCfg = JSON.parse(rawCfg);
@@ -2695,6 +2829,7 @@
         await writeJsonToDir(localDirHandle, "purchase_settings.json", {
           prefs,
           travel_prefs: travelPrefs,
+          sub_prefs: subPrefs,
           custom_config: customCfg,
         });
         await writeJsonToDir(localDirHandle, "purchase_history.json", getLocalHistory());
@@ -2812,7 +2947,11 @@
         }
         if (localDirPermission === "granted") {
           await loadFromLocalFolder();
+        } else {
+          await restoreLocalTemplate(false);
         }
+      } else {
+        await restoreLocalTemplate(false);
       }
       updateLocalSyncUI();
     }

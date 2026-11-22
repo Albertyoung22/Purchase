@@ -55,6 +55,7 @@ from travel_form_builder import (
 from form_builder import BUDGET_CODE_MAP
 from history_store import (
     append_history,
+    build_history_entries,
     clear_history,
     delete_history_record,
     export_history_csv_bytes,
@@ -645,7 +646,10 @@ def api_generate():
             reqs = chunk_requests_by_max_rows(reqs, max_rows=max_rows)
 
         files = generate_from_requests(tpl, reqs, OUTPUT_DIR, cfg)
-        history_entries = append_history(HISTORY_PATH, reqs, files)
+        if os.environ.get("RENDER") or os.environ.get("PORT"):
+            history_entries = build_history_entries(reqs, files)
+        else:
+            history_entries = append_history(HISTORY_PATH, reqs, files)
         return jsonify({
             "ok": True,
             "files": [f.name for f in files],
@@ -1224,8 +1228,9 @@ def api_substitute_generate():
             "output_file": out_path.name,
             "payload": payload,
         }
-        records = [history_entry] + _load_sub_history()
-        _save_sub_history(records)
+        if not (os.environ.get("RENDER") or os.environ.get("PORT")):
+            records = [history_entry] + _load_sub_history()
+            _save_sub_history(records)
         return jsonify({
             "ok": True,
             "filename": out_path.name,
