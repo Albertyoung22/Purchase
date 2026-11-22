@@ -9,7 +9,7 @@ import re
 from collections import defaultdict
 from copy import copy
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -875,7 +875,7 @@ def generate_from_requests(
     only_target = bool(cfg.get("keep_only_target_sheet", True))
     max_rows = int(cfg["items_table"]["max_rows"])
     chunked_requests = chunk_requests_by_max_rows(requests, max_rows=max_rows)
-    stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    stamp = datetime.now(timezone(timedelta(hours=8))).strftime("%Y%m%d_%H%M%S")
     generated_files: list[Path] = []
     for req in chunked_requests:
         safe_id = sanitize_filename(req.request_id)

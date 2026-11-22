@@ -8,7 +8,7 @@ import json
 import threading
 import uuid
 from collections import defaultdict
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -39,7 +39,7 @@ def build_history_entries(
     files: list[Path],
 ) -> list[dict[str, Any]]:
     """Build serializable history entry dicts for newly generated PurchaseRequests."""
-    now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    now_str = datetime.now(timezone(timedelta(hours=8))).strftime("%Y-%m-%d %H:%M:%S")
     new_entries: list[dict[str, Any]] = []
 
     for req, out_file in zip(requests, files):
