@@ -9,4 +9,6 @@ venv/
 uploads/
 output/
 history.json
+substitute_history.json
+.desktop_profile/
 

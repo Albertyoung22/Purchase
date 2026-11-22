@@ -1391,9 +1391,28 @@ def api_substitute_print_preview():
         return jsonify({"ok": False, "error": f"列印預覽失敗：{exc}"}), 400
 
 
+_APP_WINDOW_PROC: subprocess.Popen[Any] | None = None
+
+
 @app.post("/api/shutdown")
 def api_shutdown():
-    threading.Timer(0.3, lambda: os._exit(0)).start()
+    def _do_shutdown() -> None:
+        global _APP_WINDOW_PROC
+        if _APP_WINDOW_PROC is not None and _APP_WINDOW_PROC.poll() is None:
+            try:
+                if os.name == "nt":
+                    subprocess.run(
+                        ["taskkill", "/F", "/T", "/PID", str(_APP_WINDOW_PROC.pid)],
+                        capture_output=True,
+                        timeout=3,
+                    )
+                else:
+                    _APP_WINDOW_PROC.terminate()
+            except Exception:
+                pass
+        os._exit(0)
+
+    threading.Timer(0.25, _do_shutdown).start()
     return jsonify({"ok": True})
 
 
@@ -1408,7 +1427,10 @@ def _find_free_port(preferred: int = 5050) -> int:
 
 def _open_desktop_window(url: str) -> None:
     """Open a standalone Edge/Chrome app window on Windows, or fall back to default browser."""
+    global _APP_WINDOW_PROC
     time.sleep(0.8)
+    profile_dir = BASE_DIR / ".desktop_profile"
+    profile_dir.mkdir(parents=True, exist_ok=True)
     for exe in (
         shutil.which("msedge"),
         r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
@@ -1417,7 +1439,14 @@ def _open_desktop_window(url: str) -> None:
         r"C:\Program Files\Google\Chrome\Application\chrome.exe",
     ):
         if exe and Path(exe).exists():
-            subprocess.Popen([exe, f"--app={url}", "--window-size=1180,860"])
+            _APP_WINDOW_PROC = subprocess.Popen([
+                exe,
+                f"--app={url}",
+                "--window-size=1180,860",
+                f"--user-data-dir={profile_dir}",
+                "--no-first-run",
+                "--no-default-browser-check",
+            ])
             return
     webbrowser.open(url)
 

@@ -1758,7 +1758,10 @@
       try {
         await fetch("/api/shutdown", { method: "POST", keepalive: true });
       } catch {}
-      try { window.close(); } catch {}
+      try {
+        window.open("", "_self");
+        window.close();
+      } catch {}
       document.body.innerHTML = "<div style='padding:60px 20px; text-align:center; font-family:\"Microsoft JhengHei\",sans-serif;'><h2 style='color:#166534;'>✅ 後端程式已關閉</h2><p style='color:#475569;'>若視窗未自動關閉（瀏覽器安全限制），請直接關閉此分頁即可。</p></div>";
     }
 
