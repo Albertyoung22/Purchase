@@ -9,6 +9,7 @@ import re
 from collections import defaultdict
 from copy import copy
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -874,10 +875,16 @@ def generate_from_requests(
     only_target = bool(cfg.get("keep_only_target_sheet", True))
     max_rows = int(cfg["items_table"]["max_rows"])
     chunked_requests = chunk_requests_by_max_rows(requests, max_rows=max_rows)
+    stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     generated_files: list[Path] = []
     for req in chunked_requests:
         safe_id = sanitize_filename(req.request_id)
-        out_path = output_dir / f"{safe_id}_採購申請單.xlsx"
+        raw_label = (req.purpose or (req.items[0].name if req.items else "")).strip()[:16]
+        safe_label = sanitize_filename(raw_label) if raw_label else ""
+        if safe_label and safe_label != "untitled":
+            out_path = output_dir / f"{stamp}_{safe_id}_{safe_label}_採購申請單.xlsx"
+        else:
+            out_path = output_dir / f"{stamp}_{safe_id}_採購申請單.xlsx"
         if template_path is None:
             build_purchase_form_xlsx(req, out_path)
         else:

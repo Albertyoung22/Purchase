@@ -75,9 +75,9 @@ class TestFillPurchaseForms(unittest.TestCase):
             )
 
             self.assertEqual(len(files), 3)
-            self.assertEqual(files[0].name, "REQ-001_採購申請單.xlsx")
-            self.assertEqual(files[1].name, "REQ-002_採購申請單.xlsx")
-            self.assertEqual(files[2].name, "REQ-003_採購申請單.xlsx")
+            self.assertRegex(files[0].name, r"^\d{8}_\d{6}_REQ-001.*_採購申請單\.xlsx$")
+            self.assertRegex(files[1].name, r"^\d{8}_\d{6}_REQ-002.*_採購申請單\.xlsx$")
+            self.assertRegex(files[2].name, r"^\d{8}_\d{6}_REQ-003.*_採購申請單\.xlsx$")
 
             # Verify REQ-001
             wb1 = openpyxl.load_workbook(files[0], data_only=False)
@@ -438,8 +438,8 @@ class TestFillPurchaseForms(unittest.TestCase):
             out_dir = Path(tmp) / "output"
             files = generate_from_requests(None, [req_22], out_dir, cfg)
             self.assertEqual(len(files), 2)
-            self.assertEqual(files[0].name, "MANY-22-1_採購申請單.xlsx")
-            self.assertEqual(files[1].name, "MANY-22-2_採購申請單.xlsx")
+            self.assertRegex(files[0].name, r"^\d{8}_\d{6}_MANY-22-1.*_採購申請單\.xlsx$")
+            self.assertRegex(files[1].name, r"^\d{8}_\d{6}_MANY-22-2.*_採購申請單\.xlsx$")
             wb1 = openpyxl.load_workbook(files[0])
             wb2 = openpyxl.load_workbook(files[1])
             self.assertEqual(wb1.active["A18"].value, "文具品項1")

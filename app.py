@@ -1034,7 +1034,8 @@ def api_travel_generate():
         report = _travel_report_from_payload(payload)
         OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
         safe_name = sanitize_filename(report.traveler_name or "出差人員")
-        out_path = OUTPUT_DIR / f"國內出差旅費報告表_{safe_name}.xlsx"
+        stamp = time.strftime("%Y%m%d_%H%M%S")
+        out_path = OUTPUT_DIR / f"國內出差旅費報告表_{safe_name}_{stamp}.xlsx"
         build_travel_report_xlsx(report, out_path)
         is_same_day = bool(report.start_date and report.start_date == report.end_date) or len(report.days) == 1
         computed = [
@@ -1176,7 +1177,8 @@ def api_substitute_generate():
         roster = _substitute_roster_from_payload(payload)
         OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
         safe_plan = sanitize_filename(f"{roster.roc_year}年{roster.month}月_代課鐘點費印領清冊")
-        out_path = OUTPUT_DIR / f"{safe_plan}.xlsx"
+        stamp = time.strftime("%Y%m%d_%H%M%S")
+        out_path = OUTPUT_DIR / f"{safe_plan}_{stamp}.xlsx"
         build_substitute_roster_xlsx(roster, out_path)
         _, totals = summarize_roster(roster)
         return jsonify({
